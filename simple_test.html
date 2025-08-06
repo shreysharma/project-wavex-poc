@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Continuous STT Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .container {
+            border: 1px solid #ccc;
+            padding: 20px;
+            border-radius: 10px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .connected { background-color: #d4edda; }
+        .disconnected { background-color: #f8d7da; }
+        .recording { background-color: #fff3cd; }
+        .result {
+            background-color: #f8f9fa;
+            padding: 15px;
+            margin: 10px 0;
+            border-left: 4px solid #007bff;
+            min-height: 100px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 5px;
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:disabled {
+            background-color: #6c757d;
+        }
+        .recording-btn {
+            background-color: #dc3545;
+        }
+        #messages {
+            height: 300px;
+            overflow-y: scroll;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin: 10px 0;
+            background-color: #f8f9fa;
+            font-family: monospace;
+        }
+        #transcripts {
+            height: 200px;
+            overflow-y: scroll;
+            border: 2px solid #007bff;
+            padding: 10px;
+            margin: 10px 0;
+            background-color: #ffffff;
+        }
+        .transcript {
+            margin: 5px 0;
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Continuous STT Test</h1>
+        
+        <div id="status" class="status disconnected">
+            WebSocket: Disconnected
+        </div>
+        
+        <div style="margin: 20px 0; padding: 15px; background-color: rgba(255,255,255,0.1); border-radius: 8px;">
+            <h3>Language Settings:</h3>
+            <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap;">
+                <div>
+                    <label for="inputLang">Input Language:</label>
+                    <select id="inputLang" style="padding: 8px; margin-left: 10px; border-radius: 4px;">
+                        <option value="hi">Hindi (हिंदी)</option>
+                        <option value="en">English</option>
+                        <option value="ta">Tamil (தமிழ்)</option>
+                        <option value="te">Telugu (తెలుగు)</option>
+                        <option value="bn">Bengali (বাংলা)</option>
+                        <option value="mr">Marathi (मराठी)</option>
+                        <option value="gu">Gujarati (ગુજરાતી)</option>
+                        <option value="kn">Kannada (ಕನ್ನಡ)</option>
+                        <option value="ml">Malayalam (മലയാളം)</option>
+                        <option value="pa">Punjabi (ਪੰਜਾਬੀ)</option>
+                        <option value="ur">Urdu (اردو)</option>
+                        <option value="or">Odia (ଓଡ଼ିଆ)</option>
+                        <option value="as">Assamese (অসমীয়া)</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="outputLang">Output Language:</label>
+                    <select id="outputLang" style="padding: 8px; margin-left: 10px; border-radius: 4px;">
+                        <option value="en">English</option>
+                        <option value="hi">Hindi (हिंदी)</option>
+                        <option value="ta">Tamil (தமிழ்)</option>
+                        <option value="te">Telugu (తెలుగు)</option>
+                        <option value="bn">Bengali (বাংলা)</option>
+                        <option value="mr">Marathi (मराठी)</option>
+                        <option value="gu">Gujarati (ગુજરાતી)</option>
+                        <option value="kn">Kannada (ಕನ್ನಡ)</option>
+                        <option value="ml">Malayalam (മലയാളം)</option>
+                        <option value="pa">Punjabi (ਪੰਜਾਬੀ)</option>
+                        <option value="ur">Urdu (اردو)</option>
+                        <option value="or">Odia (ଓଡ଼ିଆ)</option>
+                        <option value="as">Assamese (অসমীয়া)</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+        
+        <div style="margin: 20px 0;">
+            <div style="margin-bottom: 15px;">
+                <label style="margin-right: 10px;">
+                    <input type="radio" name="inputMode" value="microphone" checked onchange="updateInputMode()"> 
+                    🎤 Microphone
+                </label>
+                <label style="margin-right: 10px;">
+                    <input type="radio" name="inputMode" value="file" onchange="updateInputMode()"> 
+                    📁 Audio File
+                </label>
+                <label>
+                    <input type="radio" name="inputMode" value="video" onchange="updateInputMode()"> 
+                    🎥 Video File
+                </label>
+            </div>
+            
+            <div id="microphoneControls">
+                <button id="startBtn" onclick="startRecording()" disabled>🎤 Start Streaming</button>
+                <button id="stopBtn" onclick="stopRecording()" disabled>⏹ Stop Streaming</button>
+            </div>
+            
+            <div id="fileControls" style="display: none;">
+                <input type="file" id="audioFileInput" accept="audio/*" style="margin-right: 10px;">
+                <button id="startFileBtn" onclick="startFileStreaming()" disabled>📁 Start File Streaming</button>
+                <button id="stopFileBtn" onclick="stopFileStreaming()" disabled>⏹ Stop File Streaming</button>
+            </div>
+            
+            <div id="videoControls" style="display: none;">
+                <input type="file" id="videoFileInput" accept="video/*" style="margin-right: 10px;">
+                <button id="startVideoBtn" onclick="startVideoStreaming()" disabled>🎥 Start Video Streaming</button>
+                <button id="stopVideoBtn" onclick="stopVideoStreaming()" disabled>⏹ Stop Video Streaming</button>
+                <div id="videoContainer" style="margin-top: 15px; display: none;">
+                    <video id="videoPlayer" controls style="width: 100%; max-width: 500px; border-radius: 8px;"></video>
+                </div>
+            </div>
+        </div>
+        
+        <div>
+            <h3>Live Transcripts:</h3>
+            <div id="transcripts"></div>
+        </div>
+        
+        <div>
+            <h3>Backend Messages:</h3>
+            <div id="messages"></div>
+        </div>
+    </div>
+
+    <script>
+        let websocket = null;
+        let mediaRecorder = null;
+        let audioStream = null;
+        let isRecording = false;
+        let isFileStreaming = false;
+        let isVideoStreaming = false;
+        let fileStreamInterval = null;
+        let videoStreamInterval = null;
+        let audioQueue = [];
+        let isPlayingAudio = false;
+        let videoPlayer = null;
+        let videoAudioContext = null;
+        
+        function log(message) {
+            const messages = document.getElementById('messages');
+            const timestamp = new Date().toLocaleTimeString();
+            messages.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+            messages.scrollTop = messages.scrollHeight;
+        }
+        
+        function addTranscript(text, isFinal = true) {
+            const transcripts = document.getElementById('transcripts');
+            const div = document.createElement('div');
+            div.className = 'transcript';
+            div.style.color = isFinal ? '#000' : '#666';
+            div.style.fontWeight = isFinal ? 'bold' : 'normal';
+            div.innerHTML = `${isFinal ? '✅' : '🔄'} ${text}`;
+            transcripts.appendChild(div);
+            transcripts.scrollTop = transcripts.scrollHeight;
+        }
+        
+        function queueAudio(base64AudioData, text) {
+            // Add audio to queue
+            audioQueue.push({ audioData: base64AudioData, text: text });
+            log(`🎵 Queued audio (${audioQueue.length} in queue): "${text}"`);
+            
+            // Start playing if not already playing
+            if (!isPlayingAudio) {
+                playNextAudio();
+            }
+        }
+        
+        function playNextAudio() {
+            if (audioQueue.length === 0) {
+                isPlayingAudio = false;
+                log('🎵 Audio queue empty');
+                return;
+            }
+            
+            const { audioData, text } = audioQueue.shift();
+            isPlayingAudio = true;
+            
+            try {
+                // Convert base64 to blob
+                const binaryString = atob(audioData);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                
+                // Create blob and audio element
+                const blob = new Blob([bytes], { type: 'audio/mpeg' });
+                const audioUrl = URL.createObjectURL(blob);
+                const audio = new Audio(audioUrl);
+                
+                // Set up event handlers
+                audio.addEventListener('ended', () => {
+                    URL.revokeObjectURL(audioUrl);
+                    log(`✅ Finished playing: "${text}"`);
+                    // Play next audio in queue
+                    playNextAudio();
+                });
+                
+                audio.addEventListener('error', (error) => {
+                    URL.revokeObjectURL(audioUrl);
+                    log(`❌ Audio error for "${text}": ${error.message || 'Unknown error'}`);
+                    // Continue to next audio even on error
+                    playNextAudio();
+                });
+                
+                // Play audio
+                audio.play().then(() => {
+                    log(`🔊 Playing audio (${audioQueue.length} remaining): "${text}"`);
+                }).catch(error => {
+                    log(`❌ Audio playback failed for "${text}": ${error.message}`);
+                    URL.revokeObjectURL(audioUrl);
+                    // Continue to next audio even on error
+                    playNextAudio();
+                });
+                
+            } catch (error) {
+                log(`❌ TTS audio processing failed for "${text}": ${error.message}`);
+                // Continue to next audio even on error
+                playNextAudio();
+            }
+        }
+        
+        function clearAudioQueue() {
+            audioQueue = [];
+            isPlayingAudio = false;
+            log('🔇 Audio queue cleared');
+        }
+        
+        function playTTSAudio(base64AudioData, text = 'Unknown') {
+            // Use the new queue system
+            queueAudio(base64AudioData, text);
+        }
+        
+        function updateInputMode() {
+            const mode = document.querySelector('input[name="inputMode"]:checked').value;
+            const micControls = document.getElementById('microphoneControls');
+            const fileControls = document.getElementById('fileControls');
+            const videoControls = document.getElementById('videoControls');
+            const startFileBtn = document.getElementById('startFileBtn');
+            const stopFileBtn = document.getElementById('stopFileBtn');
+            const startVideoBtn = document.getElementById('startVideoBtn');
+            const stopVideoBtn = document.getElementById('stopVideoBtn');
+            const fileInput = document.getElementById('audioFileInput');
+            const videoInput = document.getElementById('videoFileInput');
+            
+            if (mode === 'microphone') {
+                micControls.style.display = 'block';
+                fileControls.style.display = 'none';
+                videoControls.style.display = 'none';
+                if (isFileStreaming) {
+                    stopFileStreaming();
+                }
+                if (isVideoStreaming) {
+                    stopVideoStreaming();
+                }
+            } else if (mode === 'file') {
+                micControls.style.display = 'none';
+                fileControls.style.display = 'block';
+                videoControls.style.display = 'none';
+                if (isRecording) {
+                    stopRecording();
+                }
+                if (isVideoStreaming) {
+                    stopVideoStreaming();
+                }
+                
+                // Enable file streaming button when file is selected
+                fileInput.addEventListener('change', function() {
+                    startFileBtn.disabled = !this.files.length || !websocket || websocket.readyState !== WebSocket.OPEN;
+                });
+            } else if (mode === 'video') {
+                micControls.style.display = 'none';
+                fileControls.style.display = 'none';
+                videoControls.style.display = 'block';
+                if (isRecording) {
+                    stopRecording();
+                }
+                if (isFileStreaming) {
+                    stopFileStreaming();
+                }
+                
+                // Enable video streaming button when file is selected
+                videoInput.addEventListener('change', function() {
+                    startVideoBtn.disabled = !this.files.length || !websocket || websocket.readyState !== WebSocket.OPEN;
+                });
+            }
+        }
+        
+        function updateStatus(connected, recording = false, fileStreaming = false, videoStreaming = false) {
+            const status = document.getElementById('status');
+            const startBtn = document.getElementById('startBtn');
+            const stopBtn = document.getElementById('stopBtn');
+            const startFileBtn = document.getElementById('startFileBtn');
+            const stopFileBtn = document.getElementById('stopFileBtn');
+            const startVideoBtn = document.getElementById('startVideoBtn');
+            const stopVideoBtn = document.getElementById('stopVideoBtn');
+            const fileInput = document.getElementById('audioFileInput');
+            const videoInput = document.getElementById('videoFileInput');
+            
+            if (!connected) {
+                status.textContent = 'WebSocket: Disconnected';
+                status.className = 'status disconnected';
+                startBtn.disabled = true;
+                stopBtn.disabled = true;
+                startFileBtn.disabled = true;
+                stopFileBtn.disabled = true;
+                startVideoBtn.disabled = true;
+                stopVideoBtn.disabled = true;
+            } else if (recording) {
+                status.textContent = 'WebSocket: Connected - Recording & Streaming Audio';
+                status.className = 'status recording';
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                startFileBtn.disabled = true;
+                stopFileBtn.disabled = true;
+                startVideoBtn.disabled = true;
+                stopVideoBtn.disabled = true;
+            } else if (fileStreaming) {
+                status.textContent = 'WebSocket: Connected - Streaming Audio File';
+                status.className = 'status recording';
+                startBtn.disabled = true;
+                stopBtn.disabled = true;
+                startFileBtn.disabled = true;
+                stopFileBtn.disabled = false;
+                startVideoBtn.disabled = true;
+                stopVideoBtn.disabled = true;
+            } else if (videoStreaming) {
+                status.textContent = 'WebSocket: Connected - Streaming Video Audio';
+                status.className = 'status recording';
+                startBtn.disabled = true;
+                stopBtn.disabled = true;
+                startFileBtn.disabled = true;
+                stopFileBtn.disabled = true;
+                startVideoBtn.disabled = true;
+                stopVideoBtn.disabled = false;
+            } else {
+                status.textContent = 'WebSocket: Connected - Ready to Record';
+                status.className = 'status connected';
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                startFileBtn.disabled = !fileInput.files.length;
+                stopFileBtn.disabled = true;
+                startVideoBtn.disabled = !videoInput.files.length;
+                stopVideoBtn.disabled = true;
+            }
+        }
+        
+        function connectWebSocket() {
+            const wsUrl = 'ws://localhost:8000/stt-test';
+            log(`Connecting to ${wsUrl}`);
+            
+            websocket = new WebSocket(wsUrl);
+            
+            websocket.onopen = function() {
+                log('WebSocket connected');
+                updateStatus(true);
+            };
+            
+            websocket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                log(`Received: ${data.type} - ${data.message || data.transcript || ''}`);
+                
+                // Handle different message types
+                switch(data.type) {
+                    case 'connected':
+                    case 'streaming_started':
+                        log(`✅ ${data.message}`);
+                        break;
+                        
+                    case 'transcript':
+                        if (data.original_text && data.translated_text) {
+                            const latencyInfo = data.latency ? ` [STT:${data.latency.stt_ms}ms, Trans:${data.latency.translate_ms}ms, TTS:${data.latency.tts_ms}ms, Total:${data.latency.total_ms}ms]` : '';
+                            addTranscript(`${data.original_text} → ${data.translated_text}${latencyInfo}`, data.is_final);
+                            
+                            // Play TTS audio if available (with text for queue identification)
+                            if (data.audio_data) {
+                                playTTSAudio(data.audio_data, data.translated_text);
+                            }
+                        } else if (data.transcript) {
+                            // Fallback for old format
+                            addTranscript(data.transcript, data.is_final);
+                        }
+                        break;
+                        
+                    case 'error':
+                        log(`❌ Error: ${data.message}`);
+                        break;
+                        
+                    default:
+                        log(`📨 ${JSON.stringify(data)}`);
+                }
+            };
+            
+            websocket.onclose = function() {
+                log('WebSocket disconnected');
+                updateStatus(false);
+                if (isRecording) {
+                    stopRecording();
+                }
+                if (isFileStreaming) {
+                    stopFileStreaming();
+                }
+                if (isVideoStreaming) {
+                    stopVideoStreaming();
+                }
+                setTimeout(connectWebSocket, 3000);
+            };
+            
+            websocket.onerror = function(error) {
+                log(`WebSocket error: ${error}`);
+                updateStatus(false);
+            };
+        }
+        
+        async function startRecording() {
+            try {
+                // Get selected languages
+                const inputLang = document.getElementById('inputLang').value;
+                const outputLang = document.getElementById('outputLang').value;
+                
+                log(`🌐 Selected languages: ${inputLang} → ${outputLang}`);
+                log('🎤 Requesting microphone access...');
+                
+                // Send language settings to backend
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    websocket.send(JSON.stringify({
+                        type: 'language_settings',
+                        input_language: inputLang,
+                        output_language: outputLang
+                    }));
+                    log(`📤 Sent language settings: ${inputLang} → ${outputLang}`);
+                }
+                
+                // Get microphone access
+                audioStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    } 
+                });
+                
+                log('✅ Microphone access granted');
+                
+                // Create AudioContext for raw PCM audio processing
+                const audioContext = new AudioContext({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(audioStream);
+                
+                // Create ScriptProcessor to get raw PCM data
+                const processor = audioContext.createScriptProcessor(2048, 1, 1);
+                
+                processor.onaudioprocess = function(event) {
+                    if (websocket && websocket.readyState === WebSocket.OPEN) {
+                        const inputBuffer = event.inputBuffer.getChannelData(0);
+                        
+                        // Convert float32 to int16 PCM
+                        const pcmBuffer = new Int16Array(inputBuffer.length);
+                        for (let i = 0; i < inputBuffer.length; i++) {
+                            const sample = Math.max(-1, Math.min(1, inputBuffer[i]));
+                            pcmBuffer[i] = Math.round(sample * 32767);
+                        }
+                        
+                        // Send raw PCM data to backend
+                        websocket.send(pcmBuffer.buffer);
+                        // Log audio data less frequently to reduce frontend spam
+                        if (Math.random() < 0.01) { // Log ~1% of audio chunks
+                            log(`📤 Sent ${pcmBuffer.buffer.byteLength} bytes of PCM audio`);
+                        }
+                    }
+                };
+                
+                // Connect audio nodes
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+                
+                // Store processor for cleanup
+                mediaRecorder = { processor, audioContext };
+                isRecording = true;
+                updateStatus(true, true, false, false);
+                
+                log('🎙️ Recording started - speak now!');
+                
+            } catch (error) {
+                log(`❌ Error starting recording: ${error}`);
+            }
+        }
+        
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                // Clean up audio processing
+                if (mediaRecorder.processor) {
+                    mediaRecorder.processor.disconnect();
+                }
+                if (mediaRecorder.audioContext) {
+                    mediaRecorder.audioContext.close();
+                }
+                mediaRecorder = null;
+                isRecording = false;
+                log('⏹ Recording stopped');
+            }
+            
+            if (audioStream) {
+                audioStream.getTracks().forEach(track => track.stop());
+                audioStream = null;
+                log('🎤 Microphone released');
+            }
+            
+            // Send stop command to backend
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({type: 'stop_streaming'}));
+            }
+            
+            updateStatus(true, false, false, false);
+        }
+        
+        async function startFileStreaming() {
+            try {
+                const fileInput = document.getElementById('audioFileInput');
+                const file = fileInput.files[0];
+                
+                if (!file) {
+                    log('❌ No audio file selected');
+                    return;
+                }
+                
+                // Get selected languages
+                const inputLang = document.getElementById('inputLang').value;
+                const outputLang = document.getElementById('outputLang').value;
+                
+                log(`🌐 Selected languages: ${inputLang} → ${outputLang}`);
+                log(`📁 Starting file streaming: ${file.name} (${file.size} bytes)`);
+                
+                // Send language settings to backend
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    websocket.send(JSON.stringify({
+                        type: 'language_settings',
+                        input_language: inputLang,
+                        output_language: outputLang
+                    }));
+                    log(`📤 Sent language settings: ${inputLang} → ${outputLang}`);
+                }
+                
+                // Create audio context and decode the file
+                const audioContext = new AudioContext({ sampleRate: 16000 });
+                const arrayBuffer = await file.arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                
+                log(`✅ Audio file decoded: ${audioBuffer.duration.toFixed(2)}s, ${audioBuffer.numberOfChannels} channels`);
+                
+                // Convert to 16-bit PCM mono at 16kHz
+                const channelData = audioBuffer.getChannelData(0); // Get first channel
+                const chunkSize = 2048; // Same as microphone
+                const chunkDuration = chunkSize / 16000; // Duration per chunk in seconds
+                let currentIndex = 0;
+                
+                isFileStreaming = true;
+                updateStatus(true, false, true, false);
+                
+                // Stream audio chunks at real-time speed
+                fileStreamInterval = setInterval(() => {
+                    if (!isFileStreaming || !websocket || websocket.readyState !== WebSocket.OPEN) {
+                        stopFileStreaming();
+                        return;
+                    }
+                    
+                    if (currentIndex >= channelData.length) {
+                        log('✅ File streaming completed');
+                        stopFileStreaming();
+                        return;
+                    }
+                    
+                    // Extract chunk
+                    const chunkEnd = Math.min(currentIndex + chunkSize, channelData.length);
+                    const chunk = channelData.slice(currentIndex, chunkEnd);
+                    
+                    // Convert to 16-bit PCM
+                    const pcmBuffer = new Int16Array(chunk.length);
+                    for (let i = 0; i < chunk.length; i++) {
+                        const sample = Math.max(-1, Math.min(1, chunk[i]));
+                        pcmBuffer[i] = Math.round(sample * 32767);
+                    }
+                    
+                    // Send to backend (same as microphone)
+                    websocket.send(pcmBuffer.buffer);
+                    
+                    // Log progress occasionally
+                    const progress = (currentIndex / channelData.length * 100).toFixed(1);
+                    if (currentIndex % (chunkSize * 10) === 0) { // Log every ~10 chunks
+                        log(`📁 Streaming progress: ${progress}%`);
+                    }
+                    
+                    currentIndex += chunkSize;
+                }, chunkDuration * 1000); // Send chunks at real-time intervals
+                
+                log('🎙️ File streaming started - processing audio in real-time');
+                
+            } catch (error) {
+                log(`❌ Error starting file streaming: ${error.message}`);
+                stopFileStreaming();
+            }
+        }
+        
+        function stopFileStreaming() {
+            if (fileStreamInterval) {
+                clearInterval(fileStreamInterval);
+                fileStreamInterval = null;
+            }
+            
+            isFileStreaming = false;
+            log('⏹ File streaming stopped');
+            
+            // Send stop command to backend
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({type: 'stop_streaming'}));
+            }
+            
+            updateStatus(true, false, false, false);
+        }
+        
+        async function startVideoStreaming() {
+            try {
+                const videoInput = document.getElementById('videoFileInput');
+                const file = videoInput.files[0];
+                
+                if (!file) {
+                    log('❌ No video file selected');
+                    return;
+                }
+                
+                // Get selected languages
+                const inputLang = document.getElementById('inputLang').value;
+                const outputLang = document.getElementById('outputLang').value;
+                
+                log(`🌐 Selected languages: ${inputLang} → ${outputLang}`);
+                log(`🎥 Starting video streaming: ${file.name} (${file.size} bytes)`);
+                
+                // Send language settings to backend
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    websocket.send(JSON.stringify({
+                        type: 'language_settings',
+                        input_language: inputLang,
+                        output_language: outputLang
+                    }));
+                    log(`📤 Sent language settings: ${inputLang} → ${outputLang}`);
+                }
+                
+                // Show video player and load video
+                const videoContainer = document.getElementById('videoContainer');
+                const videoPlayer = document.getElementById('videoPlayer');
+                
+                videoContainer.style.display = 'block';
+                videoPlayer.src = URL.createObjectURL(file);
+                
+                // Wait for video to load metadata
+                await new Promise((resolve) => {
+                    videoPlayer.addEventListener('loadedmetadata', resolve, { once: true });
+                });
+                
+                log(`✅ Video loaded: ${videoPlayer.duration.toFixed(2)}s, ${videoPlayer.videoWidth}x${videoPlayer.videoHeight}`);
+                
+                // Create audio context to extract audio from video
+                const audioContext = new AudioContext({ sampleRate: 16000 });
+                
+                // Create a MediaElementSource from the video element
+                const source = audioContext.createMediaElementSource(videoPlayer);
+                
+                // Create a script processor to capture audio data
+                const processor = audioContext.createScriptProcessor(2048, 1, 1);
+                
+                processor.onaudioprocess = function(event) {
+                    if (!isVideoStreaming || !websocket || websocket.readyState !== WebSocket.OPEN) {
+                        return;
+                    }
+                    
+                    const inputBuffer = event.inputBuffer.getChannelData(0);
+                    
+                    // Convert float32 to int16 PCM (same as microphone)
+                    const pcmBuffer = new Int16Array(inputBuffer.length);
+                    for (let i = 0; i < inputBuffer.length; i++) {
+                        const sample = Math.max(-1, Math.min(1, inputBuffer[i]));
+                        pcmBuffer[i] = Math.round(sample * 32767);
+                    }
+                    
+                    // Send to backend (same as microphone/file)
+                    websocket.send(pcmBuffer.buffer);
+                    
+                    // Log progress occasionally
+                    if (Math.random() < 0.01) { // Log ~1% of audio chunks
+                        const progress = (videoPlayer.currentTime / videoPlayer.duration * 100).toFixed(1);
+                        log(`🎥 Video streaming progress: ${progress}% (mute stops audio)`);
+                    }
+                };
+                
+                // Connect audio nodes - route through destination so we can hear the video
+                source.connect(processor);
+                source.connect(audioContext.destination);
+                processor.connect(audioContext.destination);
+                
+                // Store references for cleanup
+                videoAudioContext = { audioContext, processor, source };
+                
+                // Set up video event handlers
+                videoPlayer.addEventListener('ended', () => {
+                    log('✅ Video playback completed');
+                    stopVideoStreaming();
+                });
+                
+                videoPlayer.addEventListener('error', (error) => {
+                    log(`❌ Video error: ${error.message || 'Unknown error'}`);
+                    stopVideoStreaming();
+                });
+                
+                isVideoStreaming = true;
+                updateStatus(true, false, false, true);
+                
+                // Start video playback
+                await videoPlayer.play();
+                log('🎙️ Video streaming started - processing audio in real-time');
+                
+            } catch (error) {
+                log(`❌ Error starting video streaming: ${error.message}`);
+                stopVideoStreaming();
+            }
+        }
+        
+        function stopVideoStreaming() {
+            // Clean up audio processing
+            if (videoAudioContext) {
+                if (videoAudioContext.processor) {
+                    videoAudioContext.processor.disconnect();
+                }
+                if (videoAudioContext.source) {
+                    videoAudioContext.source.disconnect();
+                }
+                if (videoAudioContext.audioContext) {
+                    videoAudioContext.audioContext.close();
+                }
+                videoAudioContext = null;
+            }
+            
+            // Stop video playback
+            const videoPlayer = document.getElementById('videoPlayer');
+            const videoContainer = document.getElementById('videoContainer');
+            
+            if (videoPlayer) {
+                videoPlayer.pause();
+                videoPlayer.currentTime = 0;
+                if (videoPlayer.src) {
+                    URL.revokeObjectURL(videoPlayer.src);
+                    videoPlayer.src = '';
+                }
+            }
+            
+            if (videoContainer) {
+                videoContainer.style.display = 'none';
+            }
+            
+            isVideoStreaming = false;
+            log('⏹ Video streaming stopped');
+            
+            // Send stop command to backend
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+                websocket.send(JSON.stringify({type: 'stop_streaming'}));
+            }
+            
+            updateStatus(true, false, false, false);
+        }
+        
+        // Connect on page load
+        window.onload = function() {
+            connectWebSocket();
+        };
+        
+        // Clean up on page unload
+        window.onbeforeunload = function() {
+            stopRecording();
+            stopFileStreaming();
+            stopVideoStreaming();
+            if (websocket) {
+                websocket.close();
+            }
+        };
+    </script>
+</body>
+</html>
