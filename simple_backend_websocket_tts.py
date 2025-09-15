@@ -8,6 +8,8 @@ import json
 import logging
 import os
 import time
+from threading import Lock, Timer
+from concurrent.futures import ThreadPoolExecutor
 
 # WebSocket client for Eleven Labs TTS
 import websockets
@@ -81,6 +83,7 @@ class ElevenLabsTTSService:
                     },
                     "generation_config": {"chunk_length_schedule": [100, 160, 210, 300]},
                     "xi_api_key": self.api_key,
+                    "apply_text_normalization": "auto",  # Let ElevenLabs decide when to normalize text
                 }
                 await websocket.send(json.dumps(initial_message))
                 
@@ -88,6 +91,7 @@ class ElevenLabsTTSService:
                 message = {
                     "text": text,
                     "flush": True,  # Force immediate generation as per docs
+                    "apply_text_normalization": "auto",  # Consistent normalization
                 }
                 await websocket.send(json.dumps(message))
                 
@@ -99,17 +103,17 @@ class ElevenLabsTTSService:
                 
                 while True:
                     try:
-                        response = await asyncio.wait_for(websocket.recv(), timeout=15.0)
+                        response = await asyncio.wait_for(websocket.recv(), timeout=30.0)
                         data = json.loads(response)
-                        
+
                         if data.get("audio"):
                             # Decode base64 audio chunk
                             audio_chunk = base64.b64decode(data["audio"])
                             audio_chunks.append(audio_chunk)
-                        
+
                         if data.get("isFinal"):
                             break
-                            
+
                     except asyncio.TimeoutError:
                         logger.error("⏰ Timeout waiting for audio response")
                         break
@@ -180,7 +184,7 @@ class SimpleTranslateService:
 
 
 class SimpleSTTService:
-    """Continuous streaming STT service like the original"""
+    """Continuous streaming STT service with keepalive and improved connection management"""
 
     def __init__(self):
         self.api_key = os.getenv("DEEPGRAM_API_KEY")
@@ -189,7 +193,10 @@ class SimpleSTTService:
 
         self.client = DeepgramClient(self.api_key)
         self.connection = None
-        logger.info("Simple STT service initialized")
+        self.keepalive_timer = None
+        self.last_audio_time = time.time()
+        self.connection_lock = Lock()
+        logger.info("Simple STT service initialized with keepalive support")
 
     def start_streaming(self, websocket, input_language="hi", output_language="en"):
         """Start continuous streaming transcription with dynamic languages"""
@@ -295,32 +302,65 @@ class SimpleSTTService:
 
             # Start the connection
             self.connection.start(options)
-            logger.info("Deepgram streaming started")
+            # Start keepalive timer
+            self._reset_keepalive_timer()
+            logger.info("Deepgram streaming started with keepalive")
 
         except Exception as e:
             logger.error(f"Error starting streaming: {e}")
 
     def send_audio(self, audio_data: bytes):
-        """Send audio data to Deepgram (like sending stream data)"""
-        if self.connection:
-            try:
-                self.connection.send(audio_data)
-            except Exception as e:
-                logger.error(f"Error sending audio: {e}")
+        """Send audio data to Deepgram with keepalive support"""
+        with self.connection_lock:
+            if self.connection:
+                try:
+                    self.connection.send(audio_data)
+                    self.last_audio_time = time.time()
+                    # Reset keepalive timer when we receive audio
+                    self._reset_keepalive_timer()
+                except Exception as e:
+                    logger.error(f"Error sending audio: {e}")
+
+    def _send_keepalive(self):
+        """Send keepalive packet to maintain Deepgram connection"""
+        with self.connection_lock:
+            if self.connection and time.time() - self.last_audio_time > 3.0:
+                try:
+                    # Send small keepalive packet (empty audio frame)
+                    keepalive_data = b'\x00' * 320  # 20ms of silence at 16kHz
+                    self.connection.send(keepalive_data)
+                    logger.debug("📡 Sent keepalive to Deepgram")
+                    # Schedule next keepalive
+                    self._reset_keepalive_timer()
+                except Exception as e:
+                    logger.error(f"Error sending keepalive: {e}")
+
+    def _reset_keepalive_timer(self):
+        """Reset the keepalive timer"""
+        if self.keepalive_timer:
+            self.keepalive_timer.cancel()
+        # Send keepalive every 5 seconds if no audio
+        self.keepalive_timer = Timer(5.0, self._send_keepalive)
+        self.keepalive_timer.start()
 
     def stop_streaming(self):
-        """Stop streaming"""
-        if self.connection:
-            try:
-                self.connection.finish()
-                logger.info("Deepgram streaming stopped")
-            except Exception as e:
-                logger.error(f"Error stopping streaming: {e}")
-            finally:
-                self.connection = None
-                self.websocket = None
-                if hasattr(self, "transcript_queue"):
-                    self.transcript_queue = []
+        """Stop streaming and cleanup keepalive"""
+        with self.connection_lock:
+            if self.keepalive_timer:
+                self.keepalive_timer.cancel()
+                self.keepalive_timer = None
+
+            if self.connection:
+                try:
+                    self.connection.finish()
+                    logger.info("Deepgram streaming stopped")
+                except Exception as e:
+                    logger.error(f"Error stopping streaming: {e}")
+                finally:
+                    self.connection = None
+                    self.websocket = None
+                    if hasattr(self, "transcript_queue"):
+                        self.transcript_queue = []
 
     def get_pending_transcripts(self):
         """Get and clear pending transcripts"""
@@ -330,6 +370,9 @@ class SimpleSTTService:
             return transcripts
         return []
 
+
+# Thread pool for async operations
+executor = ThreadPoolExecutor(max_workers=4)
 
 # Initialize services
 stt_service = SimpleSTTService()
@@ -372,82 +415,86 @@ async def stt_websocket(websocket: WebSocket):
         output_language = "en"  # Default to English
         streaming_started = False
 
+        # Queue for tracking async TTS tasks
+        pending_tts_tasks = {}
+
         while True:
             try:
-                # Check for pending transcripts first
-                pending_transcripts = stt_service.get_pending_transcripts()
-                for transcript_data in pending_transcripts:
-                    # Generate TTS if needed and service is available
-                    if (
-                        transcript_data.get("needs_tts")
-                        and transcript_data.get("translated_text")
-                        and tts_service
-                    ):
-                        tts_start_time = time.time()
+                # Check for completed TTS tasks first
+                completed_tasks = []
+                for task_id, task in pending_tts_tasks.items():
+                    if task.done():
+                        completed_tasks.append(task_id)
                         try:
-                            audio_bytes = await tts_service.text_to_speech(
-                                transcript_data["translated_text"]
-                            )
+                            transcript_data, audio_bytes = await task
                             if audio_bytes:
                                 # Convert to base64 for JSON transmission
                                 transcript_data["audio_data"] = base64.b64encode(
                                     audio_bytes
                                 ).decode("utf-8")
                                 logger.info(
-                                    f"🔊 Added {len(audio_bytes)} bytes of TTS audio (base64: {len(transcript_data['audio_data'])} chars) for: '{transcript_data['translated_text']}'"
+                                    f"🔊 TTS completed: {len(audio_bytes)} bytes for '{transcript_data['translated_text']}'"
                                 )
                             else:
-                                logger.warning(
-                                    f"❌ No TTS audio generated for: '{transcript_data['translated_text']}'"
-                                )
                                 transcript_data["audio_data"] = None
-                            tts_end_time = time.time()
+                                logger.warning(f"❌ TTS failed for: '{transcript_data['translated_text']}'")
 
-                            # Update latency information
-                            tts_latency = (tts_end_time - tts_start_time) * 1000
-                            transcript_data["latency"]["tts_ms"] = round(tts_latency, 2)
-                            transcript_data["latency"]["total_ms"] = round(
-                                transcript_data["latency"]["stt_ms"]
-                                + transcript_data["latency"]["translate_ms"]
-                                + tts_latency,
-                                2,
+                            # Send transcript with audio
+                            await websocket.send_json(transcript_data)
+                            latency_info = transcript_data.get("latency", {})
+                            logger.info(
+                                f"📤 Sent with TTS (STT: {latency_info.get('stt_ms', 0):.1f}ms, Trans: {latency_info.get('translate_ms', 0):.1f}ms, TTS: {latency_info.get('tts_ms', 0):.1f}ms, Total: {latency_info.get('total_ms', 0):.1f}ms)"
                             )
+                        except Exception as e:
+                            logger.error(f"Error processing completed TTS task: {e}")
 
-                        except Exception as tts_error:
-                            logger.error(f"TTS generation failed: {tts_error}")
-                            transcript_data["audio_data"] = None
-                            transcript_data["latency"]["tts_ms"] = 0
-                    elif transcript_data.get("needs_tts"):
-                        # TTS was requested but service not available
-                        transcript_data["audio_data"] = None
-                        transcript_data["latency"]["tts_ms"] = 0
-                        transcript_data["latency"]["total_ms"] = round(
-                            transcript_data["latency"]["stt_ms"]
-                            + transcript_data["latency"]["translate_ms"],
-                            2,
-                        )
+                # Remove completed tasks
+                for task_id in completed_tasks:
+                    del pending_tts_tasks[task_id]
 
-                    # Remove the flag
-                    transcript_data.pop("needs_tts", None)
-
-                    await websocket.send_json(transcript_data)
-                    latency_info = transcript_data.get("latency", {})
-                    logger.info(
-                        f"Sent transcript (STT: {latency_info.get('stt_ms', 0):.1f}ms, Trans: {latency_info.get('translate_ms', 0):.1f}ms, TTS: {latency_info.get('tts_ms', 0):.1f}ms, Total: {latency_info.get('total_ms', 0):.1f}ms): {transcript_data.get('original_text', transcript_data.get('transcript', 'unknown'))}"
+                # Check for pending transcripts
+                pending_transcripts = stt_service.get_pending_transcripts()
+                for transcript_data in pending_transcripts:
+                    # Send transcript immediately (without TTS for low latency)
+                    transcript_without_tts = transcript_data.copy()
+                    transcript_without_tts.pop("needs_tts", None)
+                    transcript_without_tts["audio_data"] = None
+                    transcript_without_tts["latency"]["tts_ms"] = 0
+                    transcript_without_tts["latency"]["total_ms"] = round(
+                        transcript_without_tts["latency"]["stt_ms"]
+                        + transcript_without_tts["latency"]["translate_ms"],
+                        2,
                     )
+
+                    await websocket.send_json(transcript_without_tts)
+                    logger.info(f"⚡ Fast transcript sent: {transcript_data.get('original_text', 'unknown')}")
+
+                    # Start TTS generation asynchronously if needed
+                    if (
+                        transcript_data.get("needs_tts")
+                        and transcript_data.get("translated_text")
+                        and tts_service
+                        and len(pending_tts_tasks) < 3  # Limit concurrent TTS tasks
+                    ):
+                        task_id = time.time()
+                        task = asyncio.create_task(
+                            _generate_tts_async(transcript_data, tts_service)
+                        )
+                        pending_tts_tasks[task_id] = task
+                        logger.info(f"🎵 Started async TTS for: '{transcript_data['translated_text']}'")
 
                 # Receive message with a small timeout so we can check transcripts regularly
                 try:
-                    message = await asyncio.wait_for(websocket.receive(), timeout=0.1)
+                    message = await asyncio.wait_for(websocket.receive(), timeout=0.05)
                 except asyncio.TimeoutError:
-                    # No message received, continue to check for transcripts
+                    # No message received, continue to check for transcripts and TTS completions
                     continue
 
                 if message["type"] == "websocket.receive" and "bytes" in message:
                     # Binary audio data - send to Deepgram only if streaming has started
                     if streaming_started:
                         audio_data = message["bytes"]
-                        logger.info(f"Received {len(audio_data)} bytes of audio")
+                        logger.debug(f"Received {len(audio_data)} bytes of audio")
                         stt_service.send_audio(audio_data)
                     else:
                         logger.debug("Audio received but streaming not started yet")
@@ -483,101 +530,6 @@ async def stt_websocket(websocket: WebSocket):
 
                         elif command.get("type") == "stop_streaming":
                             logger.info("Stop streaming command received")
-
-                            # Continue processing for a short time to catch final transcripts
-                            stop_time = time.time()
-                            while time.time() - stop_time < 2.0:  # Wait up to 2 seconds
-                                # Check for any final transcripts
-                                final_transcripts = (
-                                    stt_service.get_pending_transcripts()
-                                )
-                                for transcript_data in final_transcripts:
-                                    # Generate TTS if needed and service is available
-                                    if (
-                                        transcript_data.get("needs_tts")
-                                        and transcript_data.get("translated_text")
-                                        and tts_service
-                                    ):
-                                        tts_start_time = time.time()
-                                        try:
-                                            audio_bytes = (
-                                                await tts_service.text_to_speech(
-                                                    transcript_data["translated_text"]
-                                                )
-                                            )
-                                            if audio_bytes:
-                                                transcript_data["audio_data"] = (
-                                                    base64.b64encode(
-                                                        audio_bytes
-                                                    ).decode("utf-8")
-                                                )
-                                                logger.info(
-                                                    f"🔊 Added {len(audio_bytes)} bytes of final TTS audio for: '{transcript_data['translated_text']}'"
-                                                )
-                                            else:
-                                                transcript_data["audio_data"] = None
-                                            tts_end_time = time.time()
-
-                                            # Update latency
-                                            tts_latency = (
-                                                tts_end_time - tts_start_time
-                                            ) * 1000
-                                            transcript_data["latency"]["tts_ms"] = (
-                                                round(tts_latency, 2)
-                                            )
-                                            transcript_data["latency"]["total_ms"] = (
-                                                round(
-                                                    transcript_data["latency"]["stt_ms"]
-                                                    + transcript_data["latency"][
-                                                        "translate_ms"
-                                                    ]
-                                                    + tts_latency,
-                                                    2,
-                                                )
-                                            )
-
-                                        except Exception as tts_error:
-                                            logger.error(
-                                                f"Final TTS generation failed: {tts_error}"
-                                            )
-                                            transcript_data["audio_data"] = None
-                                            transcript_data["latency"]["tts_ms"] = 0
-                                    elif transcript_data.get("needs_tts"):
-                                        transcript_data["audio_data"] = None
-                                        transcript_data["latency"]["tts_ms"] = 0
-                                        transcript_data["latency"]["total_ms"] = round(
-                                            transcript_data["latency"]["stt_ms"]
-                                            + transcript_data["latency"][
-                                                "translate_ms"
-                                            ],
-                                            2,
-                                        )
-
-                                    # Remove the flag and send
-                                    transcript_data.pop("needs_tts", None)
-                                    await websocket.send_json(transcript_data)
-                                    latency_info = transcript_data.get("latency", {})
-                                    logger.info(
-                                        f"📤 Sent final transcript (STT: {latency_info.get('stt_ms', 0):.1f}ms, Trans: {latency_info.get('translate_ms', 0):.1f}ms, TTS: {latency_info.get('tts_ms', 0):.1f}ms, Total: {latency_info.get('total_ms', 0):.1f}ms): {transcript_data.get('original_text', 'unknown')}"
-                                    )
-
-                                if final_transcripts:
-                                    logger.info(
-                                        f"✅ Processed {len(final_transcripts)} final transcripts"
-                                    )
-
-                                # Short sleep to avoid busy waiting
-                                await asyncio.sleep(0.1)
-
-                                # Break early if no more audio being received
-                                # (We can detect this by checking if Deepgram connection closed)
-                                if not stt_service.connection:
-                                    logger.info(
-                                        "Deepgram connection closed, finishing final transcript processing"
-                                    )
-                                    break
-
-                            logger.info("Final transcript processing completed")
                             break
                     except Exception:
                         pass
@@ -595,8 +547,35 @@ async def stt_websocket(websocket: WebSocket):
         stt_service.stop_streaming()
 
 
+async def _generate_tts_async(transcript_data, tts_service):
+    """Generate TTS audio asynchronously"""
+    tts_start_time = time.time()
+    try:
+        audio_bytes = await tts_service.text_to_speech(
+            transcript_data["translated_text"]
+        )
+        tts_end_time = time.time()
+
+        # Update latency information
+        tts_latency = (tts_end_time - tts_start_time) * 1000
+        transcript_data["latency"]["tts_ms"] = round(tts_latency, 2)
+        transcript_data["latency"]["total_ms"] = round(
+            transcript_data["latency"]["stt_ms"]
+            + transcript_data["latency"]["translate_ms"]
+            + tts_latency,
+            2,
+        )
+
+        return transcript_data, audio_bytes
+
+    except Exception as tts_error:
+        logger.error(f"Async TTS generation failed: {tts_error}")
+        transcript_data["latency"]["tts_ms"] = 0
+        return transcript_data, None
+
+
 if __name__ == "__main__":
-    logger.info("🚀 Starting Voice Translation Backend with WebSocket TTS")
-    logger.info("🎵 Using Eleven Labs WebSocket TTS with chunk schedule: [100, 160, 210, 300]")
+    logger.info("🚀 Starting Optimized Voice Translation Backend with Async TTS")
+    logger.info("🎵 Using Eleven Labs WebSocket TTS with improved pipeline")
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
