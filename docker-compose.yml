@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  voice-translation:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Add your API keys here or use .env file
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID:-yco9hkSzXpAeaJXfPNpa}
+      - GOOGLE_SERVICE_ACCOUNT_JSON=${GOOGLE_SERVICE_ACCOUNT_JSON}
+    volumes:
+      # Mount .env file for environment variables
+      - ./.env:/app/.env:ro
+    networks:
+      - voice-translation-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  voice-translation-network:
+    driver: bridge
+
+# Optional: For development with live reload
+# Uncomment to enable live development
+#
+# services:
+#   voice-translation-dev:
+#     build: .
+#     ports:
+#       - "8000:8000"
+#     environment:
+#       - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY}
+#       - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+#       - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID:-yco9hkSzXpAeaJXfPNpa}
+#       - GOOGLE_SERVICE_ACCOUNT_JSON=${GOOGLE_SERVICE_ACCOUNT_JSON}
+#     volumes:
+#       - .:/app
+#       - /app/__pycache__
+#     command: python simple_backend_websocket_tts.py
+#     networks:
+#       - voice-translation-network
