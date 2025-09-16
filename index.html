@@ -1,0 +1,1417 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Continuous STT Test</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Switzer:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      href="https://fonts.googleapis.com/icon?family=Material+Icons"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div class="w-full min-h-[8vh] bg-[#E1E2F8]"></div>
+
+    <div class="w-full px-4 py-4 my-4 flex justify-between items-center">
+      <div class="flex gap-3 items-center">
+        <h1 class="text-xl font-semibold">Continuous STT Test</h1>
+
+        <div
+          id="headerConnectionStatus"
+          class="bg-red-100 w-fit px-3 py-1 rounded text-sm text-red-700"
+        >
+          WebSocket: Disconnected
+        </div>
+      </div>
+
+      <div class="flex items-center gap-4">
+        <!-- Language Settings -->
+        <div class="flex gap-3">
+          <div>
+            <label for="inputLangHeader" class="text-sm text-gray-600"
+              >Input:</label
+            >
+            <select
+              id="inputLangHeader"
+              class="ml-1 p-1 border border-gray-300 rounded text-sm"
+            >
+              <option value="hi">Hindi (हिंदी)</option>
+              <option value="en">English</option>
+              <option value="ta">Tamil (தமிழ்)</option>
+              <option value="te">Telugu (తెలుగు)</option>
+              <option value="bn">Bengali (বাংলা)</option>
+              <option value="mr">Marathi (मराठी)</option>
+              <option value="gu">Gujarati (ગુજરાતી)</option>
+              <option value="kn">Kannada (ಕನ್ನಡ)</option>
+              <option value="ml">Malayalam (മലയാളം)</option>
+              <option value="pa">Punjabi (ਪੰਜਾਬੀ)</option>
+              <option value="ur">Urdu (اردو)</option>
+              <option value="or">Odia (ଓଡ଼ିଆ)</option>
+              <option value="as">Assamese (অসমীয়া)</option>
+            </select>
+          </div>
+          <div>
+            <label for="outputLangHeader" class="text-sm text-gray-600"
+              >Output:</label
+            >
+            <select
+              id="outputLangHeader"
+              class="ml-1 p-1 border border-gray-300 rounded text-sm"
+            >
+              <option value="en">English</option>
+              <option value="hi">Hindi (हिंदी)</option>
+              <option value="ta">Tamil (তমিল)</option>
+              <option value="te">Telugu (తెలుగు)</option>
+              <option value="bn">Bengali (বাংলা)</option>
+              <option value="mr">Marathi (मराठী)</option>
+              <option value="gu">Gujarati (ગુજરાતી)</option>
+              <option value="kn">Kannada (ಕನ್ನಡ)</option>
+              <option value="ml">Malayalam (മലയാളം)</option>
+              <option value="pa">Punjabi (ਪੰਜਾਬੀ)</option>
+              <option value="ur">Urdu (اردو)</option>
+              <option value="or">Odia (ଓଡ଼ିଆ)</option>
+              <option value="as">Assamese (অসমীয়া)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- One Shot Toggle -->
+        <div class="flex items-center gap-2">
+          <span class="text-sm text-gray-600">One Shot</span>
+          <button
+            id="oneShotToggle"
+            class="relative inline-flex h-6 w-11 items-center rounded-full bg-gray-300 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            <span
+              id="toggleIndicator"
+              class="inline-block h-4 w-4 transform rounded-full bg-white shadow-lg transition-transform translate-x-1"
+            ></span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="w-full px-20 flex flex-col gap-5">
+      <div
+        class="w-full bg-white h-[64.22px] border border-gray-200 rounded-[10px] flex items-center justify-center px-[18.11px] gap-4 relative"
+        id="mainContainer"
+      >
+        <!-- Add Media Button with Popup -->
+        <div class="relative">
+          <button
+            id="addMediaBtn"
+            class="w-10 h-10 text-gray-400 rounded-full flex items-center justify-center hover:bg-blue-600 transition-colors text-xl"
+          >
+            +
+          </button>
+
+          <!-- Popup Menu -->
+          <div
+            id="mediaPopup"
+            class="absolute top-12 left-0 bg-white shadow-lg rounded-lg p-4 z-10 min-w-[200px] hidden"
+          >
+            <div class="space-y-2">
+              <button
+                class="w-full text-left p-2 hover:bg-white rounded flex items-center gap-2"
+                onclick="selectMediaType('audio')"
+              >
+                <span class="material-icons text-blue-500">audiotrack</span>
+                Audio
+              </button>
+              <button
+                class="w-full text-left p-2 hover:bg-white rounded flex items-center gap-2"
+                onclick="selectMediaType('video')"
+              >
+                <span class="material-icons text-red-500">videocam</span> Video
+              </button>
+              <button
+                class="w-full text-left p-2 hover:bg-white rounded flex items-center gap-2"
+                onclick="selectMediaType('text')"
+              >
+                <span class="material-icons text-green-500">description</span>
+                Text
+              </button>
+            </div>
+          </div>
+
+          <!-- Hidden file input -->
+          <input
+            type="file"
+            id="fileInput"
+            class="hidden"
+            accept="audio/*,video/*,text/*"
+          />
+        </div>
+
+        <!-- File Preview Area -->
+        <div id="previewArea" class="flex-1 min-h-[60px] hidden">
+          <div id="audioPreview">
+            <audio id="audioPlayer" controls class="w-full">
+              Your browser does not support the audio element.
+            </audio>
+            <p id="audioFileName" class="text-sm text-gray-600 mt-2"></p>
+          </div>
+          <div
+            id="videoPreview"
+            class="hidden bg-white rounded-lg p-4 border border-gray-300"
+          >
+            <video id="videoPlayer" controls class="w-full max-h-40 rounded">
+              Your browser does not support the video element.
+            </video>
+            <div class="mt-2">
+              <p id="videoFileName" class="text-sm text-gray-600"></p>
+            </div>
+          </div>
+          <div
+            id="textPreview"
+            class="hidden bg-white rounded-lg p-4 border border-gray-300"
+          >
+            <div
+              id="textContent"
+              class="bg-gray-50 p-3 rounded text-sm max-h-40 overflow-y-auto"
+            ></div>
+            <p id="textFileName" class="text-sm text-gray-600 mt-2"></p>
+          </div>
+        </div>
+
+        <!-- Text Input Area -->
+        <textarea
+          id="textInput"
+          placeholder="Enter your text here..."
+          class="bg-transparent rounded-lg resize-none flex-1 h-[30px] items-center focus:outline-none"
+        ></textarea>
+
+        <!-- Microphone Button -->
+        <button
+          id="micBtn"
+          class="w-10 h-10 bg-gray-500 text-white rounded-full flex items-center justify-center hover:bg-gray-600 transition-colors"
+        >
+          <span class="material-icons">mic</span>
+        </button>
+
+        <!-- Translate Button -->
+        <button
+          id="translateBtn"
+          class="bg-[#3840EB] text-white px-6 py-3 rounded-lg hover:bg-blue-600 transition-colors font-semibold"
+        >
+          Translate
+        </button>
+
+        <!-- Stats Button -->
+        <button
+          id="showLatencyStats"
+          onclick="toggleLatencyStats()"
+          class="bg-gray-600 text-white px-4 py-3 rounded-lg hover:bg-gray-700 transition-colors font-semibold"
+        >
+          Stats
+        </button>
+      </div>
+
+      <div class="w-full h-[330.95px] flex flex-col">
+        <!-- All Language Translations -->
+        <div class="flex-1">
+          <div
+            id="allLanguageResults"
+            class="min-h-72 p-3 bg-white"
+          >
+            <!-- Progress Indicator -->
+            <div id="translationProgress" class="hidden text-center p-4">
+              <div class="text-blue-600 font-semibold">
+                Translating to all languages...
+              </div>
+              <div class="mt-2 text-sm text-gray-500" id="progressText">
+                Please wait...
+              </div>
+            </div>
+
+            <!-- Original Text -->
+            <div
+              id="originalTextDisplay"
+              class="mb-3 p-3 bg-gray-50 rounded hidden"
+            >
+              <div class="font-semibold text-gray-700">Original Text:</div>
+              <div id="originalTextContent" class="mt-1 text-gray-900"></div>
+            </div>
+
+            <!-- Language Translation Grid -->
+            <div id="languageGrid" class="flex flex-col gap-2">
+              <!-- Hindi -->
+              <div
+                id="hindi-result"
+                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] bg-white"
+              >
+                <div class="font-semibold text-[#3840EB] ">Hindi (हिंदी)</div>
+                <div id="hindi-text" class="mt-1 text-sm text-gray-700"></div>
+                <div
+                  id="hindi-latency"
+                  class="text-xs text-gray-500 mt-1"
+                ></div>
+              </div>
+
+              <!-- English -->
+              <div
+                id="english-result"
+                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] bg-white"
+              >
+                <div class="font-semibold text-[#3840EB]">English</div>
+                <div id="english-text" class="mt-1 text-sm text-gray-700"></div>
+                <div
+                  id="english-latency"
+                  class="text-xs text-gray-500 mt-1"
+                ></div>
+              </div>
+
+              <!-- Tamil -->
+              <div
+                id="tamil-result"
+                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] bg-white"
+              >
+                <div class="font-semibold text-[#3840EB]">Tamil (தமிழ்)</div>
+                <div id="tamil-text" class="mt-1 text-sm text-gray-700"></div>
+                <div
+                  id="tamil-latency"
+                  class="text-xs text-gray-500 mt-1"
+                ></div>
+              </div>
+
+              <!-- Telugu -->
+              <div
+                id="telugu-result"
+                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] bg-white"
+              >
+                <div class="font-semibold text-[#3840EB]">Telugu (తెలుగు)</div>
+                <div id="telugu-text" class="mt-1 text-sm text-gray-700"></div>
+                <div
+                  id="telugu-latency"
+                  class="text-xs text-gray-500 mt-1"
+                ></div>
+              </div>
+
+              <!-- Bengali -->
+              <div
+                id="bengali-result"
+                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] bg-white"
+              >
+                <div class="font-semibold text-[#3840EB]">Bengali (বাংলা)</div>
+                <div id="bengali-text" class="mt-1 text-sm text-gray-700"></div>
+                <div
+                  id="bengali-latency"
+                  class="text-xs text-gray-500 mt-1"
+                ></div>
+              </div>
+
+              <!-- Marathi -->
+              <div
+                id="marathi-result"
+                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] bg-white"
+              >
+                <div class="font-semibold text-[#3840EB]">Marathi (मराठी)</div>
+                <div id="marathi-text" class="mt-1 text-sm text-gray-700"></div>
+                <div
+                  id="marathi-latency"
+                  class="text-xs text-gray-500 mt-1"
+                ></div>
+              </div>
+
+              <!-- Gujarati -->
+              <div
+                id="gujarati-result"
+                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] bg-white"
+              >
+                <div class="font-semibold text-[#3840EB]">Gujarati (ગુજરાતી)</div>
+                <div id="gujarati-text" class="mt-1 text-sm text-gray-700"></div>
+                <div
+                  id="gujarati-latency"
+                  class="text-xs text-gray-500 mt-1"
+                ></div>
+              </div>
+
+              <!-- Kannada -->
+              <div
+                id="kannada-result"
+                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] bg-white"
+              >
+                <div class="font-semibold text-[#3840EB]">Kannada (ಕನ್ನಡ)</div>
+                <div id="kannada-text" class="mt-1 text-sm text-gray-700"></div>
+                <div
+                  id="kannada-latency"
+                  class="text-xs text-gray-500 mt-1"
+                ></div>
+              </div>
+
+              <!-- Malayalam -->
+              <div
+                id="malayalam-result"
+                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] bg-white"
+              >
+                <div class="font-semibold text-[#3840EB]">Malayalam (മലയാളം)</div>
+                <div id="malayalam-text" class="mt-1 text-sm text-gray-700"></div>
+                <div
+                  id="malayalam-latency"
+                  class="text-xs text-gray-500 mt-1"
+                ></div>
+              </div>
+
+              <!-- Punjabi -->
+              <div
+                id="punjabi-result"
+                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] bg-white"
+              >
+                <div class="font-semibold text-[#3840EB]">Punjabi (ਪੰਜਾਬੀ)</div>
+                <div id="punjabi-text" class="mt-1 text-sm text-gray-700"></div>
+                <div
+                  id="punjabi-latency"
+                  class="text-xs text-gray-500 mt-1"
+                ></div>
+              </div>
+
+              <!-- Urdu -->
+              <div
+                id="urdu-result"
+                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] bg-white"
+              >
+                <div class="font-semibold text-[#3840EB]">Urdu (اردو)</div>
+                <div id="urdu-text" class="mt-1 text-sm text-gray-700"></div>
+                <div
+                  id="urdu-latency"
+                  class="text-xs text-gray-500 mt-1"
+                ></div>
+              </div>
+
+              <!-- Odia -->
+              <div
+                id="odia-result"
+                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] bg-white"
+              >
+                <div class="font-semibold text-[#3840EB]">Odia (ଓଡ଼ିଆ)</div>
+                <div id="odia-text" class="mt-1 text-sm text-gray-700"></div>
+                <div
+                  id="odia-latency"
+                  class="text-xs text-gray-500 mt-1"
+                ></div>
+              </div>
+
+              <!-- Assamese -->
+              <div
+                id="assamese-result"
+                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] bg-white"
+              >
+                <div class="font-semibold text-[#3840EB]">Assamese (অসমীয়া)</div>
+                <div id="assamese-text" class="mt-1 text-sm text-gray-700"></div>
+                <div
+                  id="assamese-latency"
+                  class="text-xs text-gray-500 mt-1"
+                ></div>
+              </div>
+            </div>
+
+            <!-- Default Message -->
+            <div class="text-gray-500 text-center" id="noTranslationsMsg">
+              Click "Translate" to see translations in all 13 supported languages
+            </div>
+          </div>
+
+
+        </div>
+      </div>
+
+      <!-- Latency Statistics (Absolute Positioned) -->
+      <div id="latencyStats" class="fixed top-4 right-4 bg-white border border-gray-300 rounded-lg shadow-lg p-4 w-80 z-50 hidden">
+        <div class="flex justify-between items-center mb-3">
+          <h4 class="font-semibold text-[#3840EB]">Latency Statistics</h4>
+          <button id="closeLatencyStats" class="text-gray-500 hover:text-gray-700">
+            <span class="material-icons text-sm">close</span>
+          </button>
+        </div>
+
+        <div class="space-y-2">
+          <!-- Current Language Info -->
+          <div class="text-sm">
+            <span class="font-medium">Current:</span>
+            <span id="currentLanguagePair" class="text-blue-600">Hindi → English</span>
+          </div>
+
+          <!-- Latest Entry -->
+          <div class="bg-gray-50 p-2 rounded">
+            <div class="text-xs font-medium text-gray-600 mb-1">Latest Entry:</div>
+            <div id="latestEntry" class="text-xs text-[#3840EB]">No data yet</div>
+          </div>
+
+          <!-- Average Stats -->
+          <div class="bg-blue-50 p-2 rounded">
+            <div class="text-xs font-medium text-blue-700 mb-1">Session Averages:</div>
+            <div class="text-xs space-y-1">
+              <div>STT: <span id="avgSTT" class="font-mono">0ms</span></div>
+              <div>Translation: <span id="avgTrans" class="font-mono">0ms</span></div>
+              <div>TTS: <span id="avgTTS" class="font-mono">0ms</span></div>
+              <div class="font-medium">Total: <span id="avgTotal" class="font-mono">0ms</span></div>
+            </div>
+          </div>
+
+          <!-- Entry Count -->
+          <div class="text-xs text-gray-600">
+            Total Entries: <span id="entryCount" class="font-medium">0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // One Shot Toggle functionality
+      let isOneShotEnabled = false;
+      const oneShotToggle = document.getElementById("oneShotToggle");
+      const toggleIndicator = document.getElementById("toggleIndicator");
+
+      oneShotToggle.addEventListener("click", () => {
+        isOneShotEnabled = !isOneShotEnabled;
+
+        if (isOneShotEnabled) {
+          // Enable one shot mode
+          oneShotToggle.classList.remove("bg-gray-300");
+          oneShotToggle.classList.add("bg-blue-500");
+          toggleIndicator.classList.remove("translate-x-1");
+          toggleIndicator.classList.add("translate-x-6");
+          console.log("One Shot mode enabled");
+        } else {
+          // Disable one shot mode
+          oneShotToggle.classList.remove("bg-blue-500");
+          oneShotToggle.classList.add("bg-gray-300");
+          toggleIndicator.classList.remove("translate-x-6");
+          toggleIndicator.classList.add("translate-x-1");
+          console.log("One Shot mode disabled");
+        }
+      });
+
+      // Media popup functionality
+      const addMediaBtn = document.getElementById("addMediaBtn");
+      const mediaPopup = document.getElementById("mediaPopup");
+      const fileInput = document.getElementById("fileInput");
+      const previewArea = document.getElementById("previewArea");
+
+      // Preview elements
+      const audioPreview = document.getElementById("audioPreview");
+      const videoPreview = document.getElementById("videoPreview");
+      const textPreview = document.getElementById("textPreview");
+      const audioPlayer = document.getElementById("audioPlayer");
+      const videoPlayer = document.getElementById("videoPlayer");
+      const textContent = document.getElementById("textContent");
+      const audioFileName = document.getElementById("audioFileName");
+      const videoFileName = document.getElementById("videoFileName");
+      const textFileName = document.getElementById("textFileName");
+
+      // Toggle popup
+      addMediaBtn.addEventListener("click", () => {
+        mediaPopup.classList.toggle("hidden");
+      });
+
+      // Close popup when clicking outside
+      document.addEventListener("click", (e) => {
+        if (!addMediaBtn.contains(e.target) && !mediaPopup.contains(e.target)) {
+          mediaPopup.classList.add("hidden");
+        }
+      });
+
+      // Handle media type selection
+      function selectMediaType(type) {
+        mediaPopup.classList.add("hidden");
+
+        // Set file input accept attribute based on type
+        switch (type) {
+          case "audio":
+            fileInput.accept = "audio/*";
+            break;
+          case "video":
+            fileInput.accept = "video/*";
+            break;
+          case "text":
+            fileInput.accept = ".txt,.md,.doc,.docx";
+            break;
+        }
+
+        fileInput.click();
+      }
+
+      // Handle file selection
+      fileInput.addEventListener("change", (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        // Show preview area and update layout
+        previewArea.classList.remove("hidden");
+        document
+          .getElementById("mainContainer")
+          .classList.remove("justify-between");
+        document
+          .getElementById("mainContainer")
+          .classList.add("justify-between");
+        hideAllPreviews();
+
+        const fileType = file.type;
+
+        if (fileType.startsWith("audio/")) {
+          showAudioPreview(file);
+        } else if (fileType.startsWith("video/")) {
+          showVideoPreview(file);
+        } else {
+          showTextPreview(file);
+        }
+      });
+
+      function hideAllPreviews() {
+        audioPreview.classList.add("hidden");
+        videoPreview.classList.add("hidden");
+        textPreview.classList.add("hidden");
+      }
+
+      function showAudioPreview(file) {
+        const url = URL.createObjectURL(file);
+        audioPlayer.src = url;
+        audioFileName.textContent = file.name;
+        audioPreview.classList.remove("hidden");
+
+        // Auto-start audio processing
+        selectedAudioFile = file;
+        setTimeout(() => {
+          startAudioStreaming();
+        }, 500);
+      }
+
+      function showVideoPreview(file) {
+        const url = URL.createObjectURL(file);
+        videoPlayer.src = url;
+        videoFileName.textContent = file.name;
+        videoPreview.classList.remove("hidden");
+        selectedVideoFile = file; // Store for processing
+
+        // Auto-start video processing
+        setTimeout(() => {
+          startVideoStreaming();
+        }, 500);
+      }
+
+      function showTextPreview(file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          textContent.textContent = e.target.result;
+          textFileName.textContent = file.name;
+          textPreview.classList.remove("hidden");
+        };
+        reader.readAsText(file);
+      }
+
+      // Translate button functionality
+      document.getElementById("translateBtn").addEventListener("click", () => {
+        const textInput = document.getElementById("textInput").value;
+        if (textInput.trim()) {
+          console.log("Translating text:", textInput);
+          // Add your translation logic here
+          alert("Translation feature to be implemented");
+        } else {
+          alert("Please enter some text to translate");
+        }
+      });
+
+      // WebSocket and Translation functionality
+      let websocket = null;
+      let isConnected = false;
+
+      // Function to add transcript to the display
+      function addTranscript(text, isFinal = true) {
+        const transcripts = document.getElementById("transcripts");
+        const div = document.createElement("div");
+        div.className = "transcript p-2 border-b border-gray-100";
+        div.style.color = isFinal ? "#000" : "#666";
+        div.style.fontWeight = isFinal ? "bold" : "normal";
+        div.innerHTML = `${isFinal ? "[FINAL]" : "[INTERIM]"} ${text}`;
+        transcripts.appendChild(div);
+        transcripts.scrollTop = transcripts.scrollHeight;
+
+        // Hide placeholder
+        const placeholder = transcripts.querySelector(".text-gray-500");
+        if (placeholder) placeholder.style.display = "none";
+      }
+
+      // Function to connect to WebSocket
+      function connectWebSocket() {
+        const wsUrl = "ws://localhost:8000/stt-test";
+        console.log(`Connecting to ${wsUrl}`);
+
+        websocket = new WebSocket(wsUrl);
+
+        websocket.onopen = function () {
+          console.log("WebSocket connected");
+          isConnected = true;
+
+          // Update bottom status (if it exists)
+          const bottomStatus = document.getElementById("connectionStatus");
+          if (bottomStatus) {
+            bottomStatus.textContent = "WebSocket: Connected - Ready to Record";
+            bottomStatus.className = "text-green-600";
+          }
+
+          // Update header status
+          const headerStatus = document.getElementById(
+            "headerConnectionStatus"
+          );
+          if (headerStatus) {
+            headerStatus.textContent = "WebSocket: Connected - Ready to Record";
+            headerStatus.className =
+              "bg-[#DFF7D2] w-fit px-3 py-1 rounded text-sm text-green-700";
+          }
+        };
+
+        websocket.onmessage = function (event) {
+          const data = JSON.parse(event.data);
+          console.log(`Received: ${data.type}`, data);
+
+          // Handle different message types
+          switch (data.type) {
+            case "transcript":
+              if (data.original_text && data.translated_text) {
+                // Check for duplicates using timestamp
+                const timestamp = data.timestamp;
+                if (timestamp && processedTimestamps.has(timestamp)) {
+                  console.log('Duplicate transcript detected, skipping...');
+                  break;
+                }
+
+                // Add timestamp to processed set
+                if (timestamp) {
+                  processedTimestamps.add(timestamp);
+                }
+
+                const latencyInfo = data.latency
+                  ? ` [STT:${data.latency.stt_ms}ms, Trans:${data.latency.translate_ms}ms, TTS:${data.latency.tts_ms}ms, Total:${data.latency.total_ms}ms]`
+                  : "";
+
+                // Update latency info and statistics
+                if (data.latency) {
+                  const latencyElement = document.getElementById("latencyInfo");
+                  if (latencyElement) {
+                    latencyElement.textContent = `[STT:${data.latency.stt_ms}ms, Trans:${data.latency.translate_ms}ms, TTS:${data.latency.tts_ms}ms, Total:${data.latency.total_ms}ms]`;
+                  }
+
+                  // Update latency statistics
+                  const inputLang = document.getElementById('inputLangHeader').value;
+                  const outputLang = document.getElementById('outputLangHeader').value;
+                  updateLatencyStats(data.latency, inputLang, outputLang);
+                }
+
+                // Only show final results in language grid format
+                if (data.is_final && (isRecording || isVideoStreaming || isAudioStreaming)) {
+                  // Show original text
+                  document.getElementById('originalTextDisplay').classList.remove('hidden');
+                  const sourceType = isVideoStreaming ? 'Video' : 'Live';
+                  // Accumulate original text entries with latency
+                  const existingOriginal = document.getElementById('originalTextContent').innerHTML || '';
+                  const latencyText = data.latency ? `[STT:${data.latency.stt_ms}ms, Trans:${data.latency.translate_ms}ms, TTS:${data.latency.tts_ms}ms, Total:${data.latency.total_ms}ms]` : '';
+                  const newOriginalEntry = `<div class="mb-1 text-sm">
+                    <div class="font-medium">${sourceType}: ${data.original_text}</div>
+                    <div class="text-xs text-gray-500">${latencyText}</div>
+                  </div>`;
+                  document.getElementById('originalTextContent').innerHTML = existingOriginal + newOriginalEntry;
+
+                  // Get the target language from settings
+                  const outputLang = document.getElementById('outputLangHeader').value;
+
+                  // Find and show the specific language result
+                  let targetLangName = '';
+                  switch(outputLang) {
+                    case "hi": targetLangName = "hindi"; break;
+                    case "en": targetLangName = "english"; break;
+                    case "ta": targetLangName = "tamil"; break;
+                    case "te": targetLangName = "telugu"; break;
+                    case "bn": targetLangName = "bengali"; break;
+                    case "mr": targetLangName = "marathi"; break;
+                    case "gu": targetLangName = "gujarati"; break;
+                    case "kn": targetLangName = "kannada"; break;
+                    case "ml": targetLangName = "malayalam"; break;
+                    case "pa": targetLangName = "punjabi"; break;
+                    case "ur": targetLangName = "urdu"; break;
+                    case "or": targetLangName = "odia"; break;
+                    case "as": targetLangName = "assamese"; break;
+                  }
+
+                  if (targetLangName) {
+                    document.getElementById('languageGrid').style.display = 'flex';
+                    document.getElementById('noTranslationsMsg').style.display = 'none';
+
+                    const resultDiv = document.getElementById(`${targetLangName}-result`);
+                    if (resultDiv) {
+                      resultDiv.classList.remove('hidden');
+
+                      // Create a new result entry with only the translated text
+                      const existingText = document.getElementById(`${targetLangName}-text`).innerHTML || '';
+                      const newEntry = `<div class="font-medium">${data.translated_text}</div>
+                        <div class="text-xs text-gray-500 mt-1">
+                          ${data.latency ? `[STT:${data.latency.stt_ms}ms, Trans:${data.latency.translate_ms}ms, TTS:${data.latency.tts_ms}ms, Total:${data.latency.total_ms}ms]` : 'No latency data'}
+                        </div>`;
+
+                      document.getElementById(`${targetLangName}-text`).innerHTML = existingText + newEntry;
+                      document.getElementById(`${targetLangName}-latency`).textContent = `Total entries: ${document.getElementById(`${targetLangName}-text`).children.length}`;
+                    }
+                  }
+                }
+              }
+              break;
+
+            case "error":
+              console.error(`Error: ${data.message}`);
+              break;
+          }
+        };
+
+        websocket.onclose = function () {
+          console.log("WebSocket disconnected");
+          isConnected = false;
+
+          // Update bottom status (if it exists)
+          const bottomStatus = document.getElementById("connectionStatus");
+          if (bottomStatus) {
+            bottomStatus.textContent = "WebSocket: Disconnected";
+            bottomStatus.className = "text-red-600";
+          }
+
+          // Update header status
+          const headerStatus = document.getElementById(
+            "headerConnectionStatus"
+          );
+          if (headerStatus) {
+            headerStatus.textContent = "WebSocket: Disconnected";
+            headerStatus.className =
+              "bg-red-100 w-fit px-3 py-1 rounded text-sm text-red-700";
+          }
+
+          setTimeout(connectWebSocket, 3000);
+        };
+
+        websocket.onerror = function (error) {
+          console.log(`WebSocket error: ${error}`);
+          isConnected = false;
+
+          // Update bottom status (if it exists)
+          const bottomStatus = document.getElementById("connectionStatus");
+          if (bottomStatus) {
+            bottomStatus.textContent = "WebSocket: Error";
+            bottomStatus.className = "text-red-600";
+          }
+
+          // Update header status
+          const headerStatus = document.getElementById(
+            "headerConnectionStatus"
+          );
+          if (headerStatus) {
+            headerStatus.textContent = "WebSocket: Error";
+            headerStatus.className =
+              "bg-red-100 w-fit px-3 py-1 rounded text-sm text-red-700";
+          }
+        };
+      }
+
+      // Translate button functionality - translates to all languages
+      document
+        .getElementById("translateBtn")
+        .addEventListener("click", async () => {
+          const textInput = document.getElementById("textInput").value;
+          const inputLang = document.getElementById("inputLangHeader").value;
+
+          if (!textInput.trim()) {
+            alert("Please enter some text to translate");
+            return;
+          }
+
+          try {
+            // Show progress
+            document
+              .getElementById("translationProgress")
+              .classList.remove("hidden");
+            document.getElementById("noTranslationsMsg").style.display = "none";
+            document.getElementById("languageGrid").style.display = "none";
+            document.getElementById("progressText").textContent =
+              "Translating to all languages...";
+
+            // Show original text
+            document
+              .getElementById("originalTextDisplay")
+              .classList.remove("hidden");
+            document.getElementById(
+              "originalTextContent"
+            ).textContent = `(${inputLang}) ${textInput.trim()}`;
+
+            console.log("Starting parallel translation to all languages...");
+
+            // Create form data
+            const formData = new FormData();
+            formData.append("text", textInput.trim());
+            formData.append("source_language", inputLang);
+
+            // Send to REST API endpoint
+            const response = await fetch("/translate-text", {
+              method: "POST",
+              body: formData,
+            });
+
+            if (!response.ok) {
+              throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const result = await response.json();
+
+            if (!result.success) {
+              throw new Error(result.error || "Translation failed");
+            }
+
+            console.log(
+              `SUCCESS: Translated to ${result.summary.total_languages} languages in ${result.summary.total_time_ms}ms`
+            );
+
+            // Hide progress and show results
+            document
+              .getElementById("translationProgress")
+              .classList.add("hidden");
+            document.getElementById("languageGrid").style.display = "flex";
+
+            // Clear all previous results
+            const languages = [
+              "hindi",
+              "english",
+              "tamil",
+              "telugu",
+              "bengali",
+              "marathi",
+              "gujarati",
+              "kannada",
+              "malayalam",
+              "punjabi",
+              "urdu",
+              "odia",
+              "assamese"
+            ];
+            languages.forEach((lang) => {
+              document.getElementById(`${lang}-result`).classList.add("hidden");
+            });
+
+            // Show each translation result
+            result.translations.forEach((translation) => {
+              const langCode = translation.language;
+              let langName = "";
+
+              // Map language codes to our div IDs
+              switch (langCode) {
+                case "hi":
+                  langName = "hindi";
+                  break;
+                case "en":
+                  langName = "english";
+                  break;
+                case "ta":
+                  langName = "tamil";
+                  break;
+                case "te":
+                  langName = "telugu";
+                  break;
+                case "bn":
+                  langName = "bengali";
+                  break;
+                case "mr":
+                  langName = "marathi";
+                  break;
+                case "gu":
+                  langName = "gujarati";
+                  break;
+                case "kn":
+                  langName = "kannada";
+                  break;
+                case "ml":
+                  langName = "malayalam";
+                  break;
+                case "pa":
+                  langName = "punjabi";
+                  break;
+                case "ur":
+                  langName = "urdu";
+                  break;
+                case "or":
+                  langName = "odia";
+                  break;
+                case "as":
+                  langName = "assamese";
+                  break;
+                default:
+                  return; // Skip unsupported languages
+              }
+
+              // Show the result div and populate with data
+              const resultDiv = document.getElementById(`${langName}-result`);
+              if (resultDiv) {
+                resultDiv.classList.remove("hidden");
+                document.getElementById(`${langName}-text`).textContent =
+                  translation.translated_text;
+                // Show detailed latency breakdown for all languages
+                document.getElementById(
+                  `${langName}-latency`
+                ).textContent = `[Trans:${translation.latency_ms}ms]`;
+              }
+            });
+
+            // Clear input
+            document.getElementById("textInput").value = "";
+
+            console.log("All translations displayed successfully");
+          } catch (error) {
+            console.error("Translation error:", error);
+            document
+              .getElementById("translationProgress")
+              .classList.add("hidden");
+            document.getElementById("progressText").textContent =
+              "Translation failed: " + error.message;
+            document
+              .getElementById("translationProgress")
+              .classList.remove("hidden");
+          }
+        });
+
+      // Microphone recording variables
+      let audioStream = null;
+      let mediaRecorder = null;
+      let isRecording = false;
+
+      // Video processing variables
+      let isVideoStreaming = false;
+      let videoAudioContext = null;
+      let selectedVideoFile = null;
+
+      // Audio file processing variables
+      let isAudioStreaming = false;
+      let audioFileContext = null;
+      let selectedAudioFile = null;
+
+      // Deduplication tracking
+      let processedTimestamps = new Set();
+
+      // Latency statistics tracking
+      let latencyStats = {
+        entries: [],
+        count: 0,
+        totals: { stt: 0, trans: 0, tts: 0, total: 0 }
+      };
+
+      // Add transcript functionality for microphone results
+      function addMicrophoneTranscript(text, isFinal = true) {
+        const transcripts = document.getElementById('allLanguageResults');
+        const div = document.createElement('div');
+        div.className = 'transcript p-3 mb-2 border border-gray-200 rounded bg-gray-50';
+        div.style.color = isFinal ? '#000' : '#666';
+        div.style.fontWeight = isFinal ? 'bold' : 'normal';
+        div.innerHTML = `${isFinal ? '[LIVE]' : '[LISTENING]'} ${text}`;
+
+        // Hide default message
+        document.getElementById('noTranslationsMsg').style.display = 'none';
+
+        transcripts.appendChild(div);
+        transcripts.scrollTop = transcripts.scrollHeight;
+      }
+
+      // Update latency statistics
+      function updateLatencyStats(latency, inputLang, outputLang) {
+        if (!latency) return;
+
+        // Add to tracking
+        latencyStats.entries.push(latency);
+        latencyStats.count++;
+        latencyStats.totals.stt += latency.stt_ms;
+        latencyStats.totals.trans += latency.translate_ms;
+        latencyStats.totals.tts += latency.tts_ms;
+        latencyStats.totals.total += latency.total_ms;
+
+        // Update displays
+        document.getElementById('currentLanguagePair').textContent = `${inputLang.toUpperCase()} → ${outputLang.toUpperCase()}`;
+        document.getElementById('latestEntry').textContent = `[STT:${latency.stt_ms}ms, Trans:${latency.translate_ms}ms, TTS:${latency.tts_ms}ms, Total:${latency.total_ms}ms]`;
+
+        // Calculate and show averages
+        const count = latencyStats.count;
+        document.getElementById('avgSTT').textContent = `${(latencyStats.totals.stt / count).toFixed(1)}ms`;
+        document.getElementById('avgTrans').textContent = `${(latencyStats.totals.trans / count).toFixed(1)}ms`;
+        document.getElementById('avgTTS').textContent = `${(latencyStats.totals.tts / count).toFixed(1)}ms`;
+        document.getElementById('avgTotal').textContent = `${(latencyStats.totals.total / count).toFixed(1)}ms`;
+        document.getElementById('entryCount').textContent = count;
+      }
+
+      // Show/hide latency stats
+      function toggleLatencyStats() {
+        const statsDiv = document.getElementById('latencyStats');
+        statsDiv.classList.toggle('hidden');
+      }
+
+      // Start recording function
+      async function startRecording() {
+        try {
+          // Get selected languages
+          const inputLang = document.getElementById('inputLangHeader').value;
+          const outputLang = document.getElementById('outputLangHeader').value;
+
+          console.log(`Starting recording: ${inputLang} → ${outputLang}`);
+
+          // Send language settings to backend
+          if (websocket && websocket.readyState === WebSocket.OPEN) {
+            websocket.send(JSON.stringify({
+              type: 'language_settings',
+              input_language: inputLang,
+              output_language: outputLang
+            }));
+            console.log(`Sent language settings: ${inputLang} → ${outputLang}`);
+          }
+
+          // Get microphone access
+          audioStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              sampleRate: 16000,
+              channelCount: 1,
+              echoCancellation: true,
+              noiseSuppression: true
+            }
+          });
+
+          console.log('Microphone access granted');
+
+          // Create AudioContext for raw PCM audio processing
+          const audioContext = new AudioContext({ sampleRate: 16000 });
+          const source = audioContext.createMediaStreamSource(audioStream);
+
+          // Create ScriptProcessor to get raw PCM data
+          const processor = audioContext.createScriptProcessor(2048, 1, 1);
+
+          processor.onaudioprocess = function(event) {
+            if (websocket && websocket.readyState === WebSocket.OPEN) {
+              const inputBuffer = event.inputBuffer.getChannelData(0);
+
+              // Convert float32 to int16 PCM
+              const pcmBuffer = new Int16Array(inputBuffer.length);
+              for (let i = 0; i < inputBuffer.length; i++) {
+                const sample = Math.max(-1, Math.min(1, inputBuffer[i]));
+                pcmBuffer[i] = Math.round(sample * 32767);
+              }
+
+              // Send raw PCM data to backend
+              websocket.send(pcmBuffer.buffer);
+            }
+          };
+
+          // Connect audio nodes
+          source.connect(processor);
+          processor.connect(audioContext.destination);
+
+          // Store processor for cleanup
+          mediaRecorder = { processor, audioContext };
+          isRecording = true;
+
+          // Update mic button appearance
+          const micBtn = document.getElementById('micBtn');
+          micBtn.classList.remove('bg-gray-500', 'hover:bg-gray-600');
+          micBtn.classList.add('bg-red-500', 'hover:bg-red-600');
+          micBtn.innerHTML = '<span class="material-icons">stop</span>';
+
+          console.log('Recording started - speak now!');
+
+        } catch (error) {
+          console.error(`Error starting recording: ${error}`);
+          alert('Could not access microphone: ' + error.message);
+        }
+      }
+
+      // Stop recording function
+      function stopRecording() {
+        if (mediaRecorder && isRecording) {
+          // Clean up audio processing
+          if (mediaRecorder.processor) {
+            mediaRecorder.processor.disconnect();
+          }
+          if (mediaRecorder.audioContext) {
+            mediaRecorder.audioContext.close();
+          }
+          mediaRecorder = null;
+          isRecording = false;
+          console.log('Recording stopped');
+        }
+
+        if (audioStream) {
+          audioStream.getTracks().forEach(track => track.stop());
+          audioStream = null;
+          console.log('Microphone released');
+        }
+
+        // Send stop command to backend
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+          websocket.send(JSON.stringify({type: 'stop_streaming'}));
+        }
+
+        // Update mic button appearance back to normal
+        const micBtn = document.getElementById('micBtn');
+        micBtn.classList.remove('bg-red-500', 'hover:bg-red-600');
+        micBtn.classList.add('bg-gray-500', 'hover:bg-gray-600');
+        micBtn.innerHTML = '<span class="material-icons">mic</span>';
+
+      }
+
+      // Audio file processing functions
+      async function startAudioStreaming() {
+        try {
+          if (!selectedAudioFile) {
+            console.log('No audio file selected');
+            return;
+          }
+
+          // Get selected languages
+          const inputLang = document.getElementById('inputLangHeader').value;
+          const outputLang = document.getElementById('outputLangHeader').value;
+
+          console.log(`Starting audio file processing: ${selectedAudioFile.name} (${selectedAudioFile.size} bytes)`);
+          console.log(`Languages: ${inputLang} → ${outputLang}`);
+
+          // Send language settings to backend
+          if (websocket && websocket.readyState === WebSocket.OPEN) {
+            websocket.send(JSON.stringify({
+              type: 'language_settings',
+              input_language: inputLang,
+              output_language: outputLang
+            }));
+            console.log(`Sent language settings: ${inputLang} → ${outputLang}`);
+          }
+
+          // Create audio context and decode the file
+          const audioContext = new AudioContext({ sampleRate: 16000 });
+          const arrayBuffer = await selectedAudioFile.arrayBuffer();
+          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+          console.log(`Audio file decoded: ${audioBuffer.duration.toFixed(2)}s, ${audioBuffer.numberOfChannels} channels`);
+
+          // Convert to 16-bit PCM mono at 16kHz
+          const channelData = audioBuffer.getChannelData(0); // Get first channel
+          const chunkSize = 2048; // Same as microphone
+          const chunkDuration = chunkSize / 16000; // Duration per chunk in seconds
+          let currentIndex = 0;
+
+          isAudioStreaming = true;
+
+          // Stream audio chunks at real-time speed
+          const fileStreamInterval = setInterval(() => {
+            if (!isAudioStreaming || !websocket || websocket.readyState !== WebSocket.OPEN) {
+              clearInterval(fileStreamInterval);
+              stopAudioStreaming();
+              return;
+            }
+
+            if (currentIndex >= channelData.length) {
+              console.log('Audio file streaming completed');
+              clearInterval(fileStreamInterval);
+              stopAudioStreaming();
+              return;
+            }
+
+            // Extract chunk
+            const chunkEnd = Math.min(currentIndex + chunkSize, channelData.length);
+            const chunk = channelData.slice(currentIndex, chunkEnd);
+
+            // Convert to 16-bit PCM
+            const pcmBuffer = new Int16Array(chunk.length);
+            for (let i = 0; i < chunk.length; i++) {
+              const sample = Math.max(-1, Math.min(1, chunk[i]));
+              pcmBuffer[i] = Math.round(sample * 32767);
+            }
+
+            // Send to backend (same as microphone)
+            websocket.send(pcmBuffer.buffer);
+
+            currentIndex += chunkSize;
+          }, chunkDuration * 1000); // Send chunks at real-time intervals
+
+          console.log('Audio file streaming started - processing audio in real-time');
+
+        } catch (error) {
+          console.error(`Error starting audio streaming: ${error.message}`);
+          stopAudioStreaming();
+        }
+      }
+
+      function stopAudioStreaming() {
+        isAudioStreaming = false;
+        console.log('Audio file streaming stopped');
+
+        // Send stop command to backend
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+          websocket.send(JSON.stringify({type: 'stop_streaming'}));
+        }
+      }
+
+      // Video processing functions
+      async function startVideoStreaming() {
+        try {
+          if (!selectedVideoFile) {
+            alert('No video file selected');
+            return;
+          }
+
+          // Get selected languages
+          const inputLang = document.getElementById('inputLangHeader').value;
+          const outputLang = document.getElementById('outputLangHeader').value;
+
+          console.log(`Starting video processing: ${selectedVideoFile.name} (${selectedVideoFile.size} bytes)`);
+          console.log(`Languages: ${inputLang} → ${outputLang}`);
+
+          // Send language settings to backend
+          if (websocket && websocket.readyState === WebSocket.OPEN) {
+            websocket.send(JSON.stringify({
+              type: 'language_settings',
+              input_language: inputLang,
+              output_language: outputLang
+            }));
+            console.log(`Sent language settings: ${inputLang} → ${outputLang}`);
+          }
+
+          // Wait for video to load metadata
+          const videoPlayer = document.getElementById('videoPlayer');
+          await new Promise((resolve) => {
+            if (videoPlayer.readyState >= 1) {
+              resolve();
+            } else {
+              videoPlayer.addEventListener('loadedmetadata', resolve, { once: true });
+            }
+          });
+
+          console.log(`Video loaded: ${videoPlayer.duration.toFixed(2)}s, ${videoPlayer.videoWidth}x${videoPlayer.videoHeight}`);
+
+          // Create audio context to extract audio from video
+          const audioContext = new AudioContext({ sampleRate: 16000 });
+
+          // Create a MediaElementSource from the video element
+          const source = audioContext.createMediaElementSource(videoPlayer);
+
+          // Create a script processor to capture audio data
+          const processor = audioContext.createScriptProcessor(2048, 1, 1);
+
+          processor.onaudioprocess = function(event) {
+            if (!isVideoStreaming || !websocket || websocket.readyState !== WebSocket.OPEN) {
+              return;
+            }
+
+            const inputBuffer = event.inputBuffer.getChannelData(0);
+
+            // Convert float32 to int16 PCM (same as microphone)
+            const pcmBuffer = new Int16Array(inputBuffer.length);
+            for (let i = 0; i < inputBuffer.length; i++) {
+              const sample = Math.max(-1, Math.min(1, inputBuffer[i]));
+              pcmBuffer[i] = Math.round(sample * 32767);
+            }
+
+            // Send to backend (same as microphone/file)
+            websocket.send(pcmBuffer.buffer);
+          };
+
+          // Connect audio nodes - route through destination so we can hear the video
+          source.connect(processor);
+          source.connect(audioContext.destination);
+          processor.connect(audioContext.destination);
+
+          // Store references for cleanup
+          videoAudioContext = { audioContext, processor, source };
+
+          // Set up video event handlers
+          videoPlayer.addEventListener('ended', () => {
+            console.log('Video playback completed');
+            stopVideoStreaming();
+          });
+
+          videoPlayer.addEventListener('error', (error) => {
+            console.log(`Video error: ${error.message || 'Unknown error'}`);
+            stopVideoStreaming();
+          });
+
+          isVideoStreaming = true;
+
+          console.log('Video processing started automatically');
+
+          // Start video playback
+          await videoPlayer.play();
+          console.log('Video streaming started - processing audio in real-time');
+
+        } catch (error) {
+          console.error(`Error starting video streaming: ${error.message}`);
+          stopVideoStreaming();
+        }
+      }
+
+      function stopVideoStreaming() {
+        // Clean up audio processing
+        if (videoAudioContext) {
+          if (videoAudioContext.processor) {
+            videoAudioContext.processor.disconnect();
+          }
+          if (videoAudioContext.source) {
+            videoAudioContext.source.disconnect();
+          }
+          if (videoAudioContext.audioContext) {
+            videoAudioContext.audioContext.close();
+          }
+          videoAudioContext = null;
+        }
+
+        // Stop video playback and reset
+        const videoPlayer = document.getElementById('videoPlayer');
+
+        if (videoPlayer) {
+          videoPlayer.pause();
+          videoPlayer.currentTime = 0;
+
+          // Completely reset the video element to avoid audio context conflicts
+          const currentSrc = videoPlayer.src;
+          videoPlayer.src = '';
+          videoPlayer.load();
+
+          // Restore the video source
+          setTimeout(() => {
+            if (selectedVideoFile) {
+              videoPlayer.src = URL.createObjectURL(selectedVideoFile);
+            }
+          }, 100);
+        }
+
+        isVideoStreaming = false;
+        console.log('Video streaming stopped');
+
+        // Send stop command to backend
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+          websocket.send(JSON.stringify({type: 'stop_streaming'}));
+        }
+
+        console.log('Video processing stopped automatically');
+      }
+
+
+      // Microphone button functionality
+      document.getElementById("micBtn").addEventListener("click", () => {
+        if (!isRecording) {
+          startRecording();
+        } else {
+          stopRecording();
+        }
+      });
+
+      // Close latency stats functionality
+      document.getElementById("closeLatencyStats").addEventListener("click", () => {
+        document.getElementById('latencyStats').classList.add('hidden');
+      });
+
+      // Connect WebSocket on page load
+      window.addEventListener("load", () => {
+        connectWebSocket();
+      });
+    </script>
+  </body>
+</html>
