@@ -50,104 +50,145 @@ app.add_middleware(
 )
 
 
-class ElevenLabsTTSService:
-    """Eleven Labs TTS service using WebSocket API"""
+class AzureTTSService:
+    """Azure Speech Service TTS with comprehensive Indian language support"""
 
     def __init__(self):
-        self.api_key = os.getenv("ELEVENLABS_API_KEY")
-        if not self.api_key:
-            raise ValueError("ELEVENLABS_API_KEY environment variable required")
+        self.speech_key = os.getenv("AZURE_SPEECH_KEY")
+        self.speech_region = os.getenv("AZURE_SPEECH_REGION", "eastus")
 
-        # Default voice ID (you can change this to any Eleven Labs voice)
-        self.voice_id = os.getenv(
-            "ELEVENLABS_VOICE_ID", "yco9hkSzXpAeaJXfPNpa"  # "1tyCkDKmBd1gCvRcimhT"
-        )  # Default to Rachel voice
+        if not self.speech_key:
+            raise ValueError("AZURE_SPEECH_KEY environment variable required")
 
-        # Configurable model for TTS
-        self.model_id = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
+        try:
+            import azure.cognitiveservices.speech as speechsdk
 
-        logger.info(
-            f"Eleven Labs TTS service initialized - Voice: {self.voice_id}, Model: {self.model_id}"
-        )
+            # Initialize speech config
+            self.speech_config = speechsdk.SpeechConfig(
+                subscription=self.speech_key,
+                region=self.speech_region
+            )
 
-    async def text_to_speech(self, text: str) -> bytes:
-        """Convert text to speech using Eleven Labs WebSocket API"""
+            # Set audio format to MP3 for compatibility
+            self.speech_config.set_speech_synthesis_output_format(
+                speechsdk.SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3
+            )
+
+            # Configure default voice and speed
+            self.default_voice_name = os.getenv("AZURE_TTS_VOICE_NAME", "en-US-AvaMultilingualNeural")
+            self.speaking_rate = float(os.getenv("AZURE_TTS_SPEAKING_RATE", "1.0"))  # 1.0 = normal speed
+
+            logger.info(f"Azure TTS service initialized - Region: {self.speech_region}, Voice: {self.default_voice_name}, Rate: {self.speaking_rate}x")
+
+        except Exception as e:
+            raise ValueError(f"Failed to initialize Azure Speech client: {e}")
+
+    def _get_voice_and_language(self, language_code):
+        """Get appropriate Azure voice and language code for target language"""
+        # Language code mapping for Azure TTS
+        language_mapping = {
+            "en": "en-US",
+            "hi": "hi-IN",
+            "ta": "ta-IN",
+            "te": "te-IN",
+            "bn": "bn-IN",
+            "mr": "mr-IN",
+            "gu": "gu-IN",
+            "kn": "kn-IN",
+            "ml": "ml-IN",
+            "pa": "pa-IN",
+            "ur": "ur-IN",
+            "or": "or-IN",  # Odia
+            "as": "as-IN",  # Assamese
+        }
+
+        # Special voice mapping for specific languages
+        if language_code == "gu":
+            # Use specific Gujarati voice
+            voice_name = "gu-IN-DhwaniNeural"
+        elif language_code == "pa":
+            # Use specific Punjabi voice
+            voice_name = "pa-IN-VaaniNeural"
+        elif language_code == "or":
+            # Use specific Odia voice
+            voice_name = "or-IN-SubhasiniNeural"
+        elif language_code == "as":
+            # Use specific Assamese voice
+            voice_name = "as-IN-YashicaNeural"
+        else:
+            # Use configurable multilingual voice for other languages
+            voice_name = self.default_voice_name
+
+        # Get the full language code
+        full_language_code = language_mapping.get(language_code, "en-US")
+
+        return voice_name, full_language_code
+
+    def _get_speaking_rate(self, language_code):
+        """Get speaking rate for specific language"""
+        if language_code in ["gu", "pa", "or", "as"]:
+            # Gujarati, Punjabi, Odia, and Assamese: Add 0.2 to base speed
+            return self.speaking_rate + 0.2
+        else:
+            # All other languages: Use env configured speed
+            return self.speaking_rate
+
+    async def text_to_speech(self, text: str, target_language: str = "en") -> bytes:
+        """Convert text to speech using Azure Speech Service"""
         try:
             if not text or not text.strip():
                 return b""
 
-            # Connect to Eleven Labs WebSocket
-            uri = f"wss://api.elevenlabs.io/v1/text-to-speech/{self.voice_id}/stream-input?model_id={self.model_id}"
+            import azure.cognitiveservices.speech as speechsdk
+            import asyncio
 
-            async with websockets.connect(uri) as websocket:
-                # Send initial connection message with voice settings (as per docs)
-                initial_message = {
-                    "text": " ",  # Send space to initialize, not empty string
-                    "voice_settings": {
-                        "stability": 0.5,
-                        "similarity_boost": 0.8,
-                        "use_speaker_boost": False,
-                    },
-                    "generation_config": {
-                        "chunk_length_schedule": [100, 160, 210, 300]
-                    },
-                    "xi_api_key": self.api_key,
-                    "apply_text_normalization": "auto",  # Let ElevenLabs decide when to normalize text
-                }
-                await websocket.send(json.dumps(initial_message))
+            # Get appropriate voice, language, and speaking rate for the target language
+            voice_name, language_code = self._get_voice_and_language(target_language)
+            speaking_rate = self._get_speaking_rate(target_language)
 
-                # Send the actual text with flush=True for immediate generation
-                message = {
-                    "text": text,
-                    "flush": True,  # Force immediate generation as per docs
-                    "apply_text_normalization": "auto",  # Consistent normalization
-                }
-                await websocket.send(json.dumps(message))
+            # Create speech synthesizer with the selected voice and language
+            self.speech_config.speech_synthesis_voice_name = voice_name
+            self.speech_config.speech_synthesis_language = language_code
 
-                # Send empty string to close connection
-                await websocket.send(json.dumps({"text": ""}))
+            # Create synthesizer
+            synthesizer = speechsdk.SpeechSynthesizer(speech_config=self.speech_config)
 
-                # Collect audio chunks
-                audio_chunks = []
+            # Perform synthesis using SSML for speed control
+            def synthesis_task():
+                # Create SSML with speaking rate control
+                ssml_text = f"""
+                <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="{language_code}">
+                    <voice name="{voice_name}">
+                        <prosody rate="{speaking_rate}">
+                            {text.strip()}
+                        </prosody>
+                    </voice>
+                </speak>
+                """
 
-                while True:
-                    try:
-                        response = await asyncio.wait_for(
-                            websocket.recv(), timeout=30.0
-                        )
-                        data = json.loads(response)
+                result = synthesizer.speak_ssml(ssml_text)
 
-                        if data.get("audio"):
-                            # Decode base64 audio chunk
-                            audio_chunk = base64.b64decode(data["audio"])
-                            audio_chunks.append(audio_chunk)
-
-                        if data.get("isFinal"):
-                            break
-
-                    except asyncio.TimeoutError:
-                        logger.error(" Timeout waiting for audio response")
-                        break
-                    except json.JSONDecodeError as e:
-                        logger.error(f" JSON decode error: {e}")
-                        break
-                    except websockets.exceptions.ConnectionClosed:
-                        logger.debug("TTS WebSocket connection closed")
-                        break
-
-                # Combine all audio chunks
-                if audio_chunks:
-                    combined_audio = b"".join(audio_chunks)
-                    logger.info(
-                        f" Generated {len(combined_audio)} bytes of TTS audio via WebSocket API for text: '{text}'"
-                    )
-                    return combined_audio
+                if result.reason == speechsdk.ResultReason.SynthesizingAudioCompleted:
+                    return result.audio_data
+                elif result.reason == speechsdk.ResultReason.Canceled:
+                    cancellation_details = speechsdk.CancellationDetails(result)
+                    raise Exception(f"Speech synthesis canceled: {cancellation_details.reason}")
                 else:
-                    logger.warning(f" No audio chunks received for text: '{text}'")
-                    return b""
+                    raise Exception(f"Speech synthesis failed with reason: {result.reason}")
+
+            # Run synthesis in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            audio_data = await loop.run_in_executor(None, synthesis_task)
+
+            if audio_data:
+                logger.info(f"Generated {len(audio_data)} bytes of Azure TTS audio for: '{text}' (voice: {voice_name})")
+                return audio_data
+            else:
+                logger.warning(f"No audio generated for text: '{text}'")
+                return b""
 
         except Exception as e:
-            logger.error(f"TTS WebSocket API error: {e}")
+            logger.error(f"Azure TTS error: {e}")
             return b""
 
 
@@ -396,10 +437,10 @@ global_tts_service = None
 
 # Initialize global TTS service (optional) for REST endpoints
 try:
-    global_tts_service = ElevenLabsTTSService()
-    logger.info("Global TTS service initialized successfully with WebSocket API")
+    global_tts_service = AzureTTSService()
+    logger.info("Global Azure TTS service initialized successfully")
 except ValueError as e:
-    logger.warning(f"Global TTS service not available: {e}")
+    logger.warning(f"Global Azure TTS service not available: {e}")
     logger.info("TTS functionality will be disabled for REST endpoints")
 
 
@@ -491,7 +532,7 @@ async def translate_complete_file(
         audio_data = None
         if global_tts_service and translated_text:
             try:
-                audio_bytes = await global_tts_service.text_to_speech(translated_text)
+                audio_bytes = await global_tts_service.text_to_speech(translated_text, output_language)
                 if audio_bytes:
                     audio_data = base64.b64encode(audio_bytes).decode("utf-8")
                     logger.info(f" Generated TTS audio: {len(audio_bytes)} bytes")
@@ -633,7 +674,7 @@ async def translate_complete_video(
         translated_audio_path = None
         if global_tts_service and translated_text:
             try:
-                audio_bytes = await global_tts_service.text_to_speech(translated_text)
+                audio_bytes = await global_tts_service.text_to_speech(translated_text, output_language)
                 if audio_bytes:
                     # Save TTS audio to temporary file
                     translated_audio_path = temp_video_path.replace(f'.{video_ext}', '_translated.mp3')
@@ -831,10 +872,10 @@ async def stt_websocket(websocket: WebSocket):
     connection_tts_service = None
 
     try:
-        connection_tts_service = ElevenLabsTTSService()
-        logger.info("Connection TTS service initialized")
+        connection_tts_service = AzureTTSService()
+        logger.info("Connection Azure TTS service initialized")
     except ValueError as e:
-        logger.warning(f"Connection TTS service not available: {e}")
+        logger.warning(f"Connection Azure TTS service not available: {e}")
 
     try:
         # Send connection confirmation
@@ -1002,7 +1043,8 @@ async def _generate_tts_async(transcript_data, tts_service):
     tts_start_time = time.time()
     try:
         audio_bytes = await tts_service.text_to_speech(
-            transcript_data["translated_text"]
+            transcript_data["translated_text"],
+            transcript_data["target_language"]
         )
         tts_end_time = time.time()
 
