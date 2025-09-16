@@ -446,8 +446,8 @@ except ValueError as e:
 
 @app.get("/")
 async def serve_test_page():
-    """Serve the simple test HTML"""
-    return FileResponse("simple_test.html")
+    """Serve the main index HTML"""
+    return FileResponse("index.html")
 
 
 @app.post("/translate-file")

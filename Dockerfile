@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY simple_backend_websocket_tts.py .
 COPY simple_test.html .
+COPY index.html .
 
 # Create a simple startup script that serves both backend and HTML
 RUN echo '#!/bin/bash\n\
