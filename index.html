@@ -1605,16 +1605,6 @@
                   }
                 }
 
-                // Show original text once
-                if (lang.code === 'en') {
-                  document.getElementById('originalTextDisplay').classList.remove('hidden');
-                  const existingOriginal = document.getElementById('originalTextContent').innerHTML || '';
-                  const newOriginalEntry = `<div class="mb-1 text-sm">
-                    <div class="font-medium">Audio Live: ${data.original_text}</div>
-                    <div class="text-xs text-gray-500">[Real-time streaming]</div>
-                  </div>`;
-                  document.getElementById('originalTextContent').innerHTML = existingOriginal + newOriginalEntry;
-                }
 
                 // Store TTS audio data (don't auto-play)
                 if (data.audio_data) {
@@ -1810,55 +1800,76 @@
               const mappedLangName = getLangNameFromCode(lang.code);
               console.log(`Immediately showing result for ${lang.name} (${mappedLangName})`);
 
+              // Handle Hindi case (same language, use original text)
+              const displayText = result.translated_text || result.original_text;
+              const hasRealTranslation = result.translated_text && result.translated_text.length > 0;
+
               if (mappedLangName) {
                 const resultDiv = document.getElementById(`${mappedLangName}-result`);
                 if (resultDiv) {
                   resultDiv.classList.remove('hidden');
                   const existingText = document.getElementById(`${mappedLangName}-text`).innerHTML || '';
-                  const newEntry = `<div class="mb-2 p-2 bg-white rounded border-l-4 border-yellow-400">
-                    <div class="font-medium">${result.translated_text}</div>
+                  const borderColor = hasRealTranslation ? 'border-yellow-400' : 'border-gray-400';
+                  const label = hasRealTranslation ? '' : ' (Original)';
+                  const newEntry = `<div class="mb-2 p-2 bg-white rounded border-l-4 ${borderColor}">
+                    <div class="font-medium">${displayText}${label}</div>
                     <div class="text-xs text-gray-500 mt-1">[STT:${result.latency.stt_ms}ms, Trans:${result.latency.translate_ms}ms, TTS:${result.latency.tts_ms}ms, Total:${result.latency.total_ms}ms]</div>
                   </div>`;
                   document.getElementById(`${mappedLangName}-text`).innerHTML = existingText + newEntry;
 
-                  // Show original text from first successful result
-                  if (lang.code === 'en' && result.original_text) {
-                    document.getElementById('originalTextDisplay').classList.remove('hidden');
-                    const existingOriginal = document.getElementById('originalTextContent').innerHTML || '';
-                    const newOriginalEntry = `<div class="mb-1 text-sm">
-                      <div class="font-medium">Audio Batch: ${result.original_text}</div>
-                      <div class="text-xs text-gray-500">[Showing results as they complete]</div>
-                    </div>`;
-                    document.getElementById('originalTextContent').innerHTML = existingOriginal + newOriginalEntry;
-                  }
 
-                  // Show TTS audio player if available
-                  if (result.audio_data) {
-                    console.log(`Creating audio player for ${lang.name}`);
+                  // Show audio/video player based on mode
+                  if (lang.code === 'hi' && !hasRealTranslation) {
+                    // For Hindi (original), show the original file player
+                    console.log(`Creating original file player for Hindi`);
 
-                    // Store audio data for this language
+                    // Store original audio file data
                     languageAudioData[lang.code] = {
-                      audioData: result.audio_data,
-                      text: result.translated_text,
+                      audioData: 'original', // Special marker for original file
+                      text: displayText,
                       timestamp: new Date().toISOString()
                     };
 
-                    // Show audio player for this language
-                    showLanguageAudioPlayer(lang.code, result.audio_data, result.translated_text);
-                    console.log(`Audio player ready for ${lang.name}: ${result.translated_text.substring(0, 30)}...`);
+                    // Show audio/video player for original file
+                    if (isVideoStreaming) {
+                      showLanguageVideoPlayer(lang.code, selectedVideoFile, displayText);
+                    } else {
+                      showLanguageAudioPlayer(lang.code, 'original', displayText);
+                    }
 
-                    // Auto-play first TTS audio that completes (no original audio in One Shot mode)
+                  } else if (result.audio_data) {
+                    // For other languages with TTS audio
+                    console.log(`Creating TTS player for ${lang.name}`);
+
+                    // Store TTS audio data
+                    languageAudioData[lang.code] = {
+                      audioData: result.audio_data,
+                      text: displayText,
+                      timestamp: new Date().toISOString()
+                    };
+
+                    // Show TTS audio/video player
+                    if (isVideoStreaming) {
+                      showLanguageVideoPlayer(lang.code, result.video_data, displayText);
+                    } else {
+                      showLanguageAudioPlayer(lang.code, result.audio_data, displayText);
+                    }
+
+                    // Auto-play first TTS that completes
                     if (!firstTTSReceived) {
                       firstTTSReceived = true;
-                      console.log(`First TTS completed for ${lang.name}, starting playback immediately`);
+                      console.log(`First TTS completed for ${lang.name}, starting playback`);
 
-                      // Auto-play first TTS audio from beginning
                       setTimeout(() => {
                         const firstLangButton = document.querySelector(`[data-langcode="${lang.code}"]`);
                         if (firstLangButton) {
                           console.log(`Auto-playing first TTS: ${lang.name}`);
-                          sharedAudioPosition = 0; // Start from beginning for first TTS
-                          playLanguageAudio(mappedLangName, lang.code, firstLangButton);
+                          sharedAudioPosition = 0;
+                          if (isVideoStreaming) {
+                            playLanguageVideo(mappedLangName, lang.code, firstLangButton);
+                          } else {
+                            playLanguageAudio(mappedLangName, lang.code, firstLangButton);
+                          }
                         }
                       }, 500);
                     }
@@ -2082,6 +2093,9 @@
       let currentlyPlayingLang = null;
       let sharedAudioPosition = 0; // Shared position across all language audios
       let firstTTSReceived = false; // Track if we've received first TTS audio
+      let languageVideoData = {}; // Store video data for each language
+      let currentlyPlayingVideoLang = null;
+      let sharedVideoPosition = 0; // Shared position across all language videos
 
       function queueAudio(base64AudioData, text, langCode = 'default') {
         // Store audio data for specific language
@@ -2117,7 +2131,99 @@
         }
       }
 
+      function showLanguageVideoPlayer(langCode, videoData, text) {
+        const langName = getLangNameFromCode(langCode);
+        if (langName) {
+          const videoPlayerDiv = document.getElementById(`${langName}-video-player`);
+
+          // Create video player if it doesn't exist
+          if (!videoPlayerDiv) {
+            const resultDiv = document.getElementById(`${langName}-result`);
+            if (resultDiv) {
+              // Get current content
+              const titleElement = resultDiv.querySelector('.text-\\[\\#3840EB\\]') || resultDiv.querySelector('[class*="font-semibold"]');
+              const textElement = document.getElementById(`${langName}-text`);
+              const latencyElement = document.getElementById(`${langName}-latency`);
+
+              const title = titleElement ? titleElement.textContent : `Language`;
+              const textContent = textElement ? textElement.innerHTML : '';
+              const latencyContent = latencyElement ? latencyElement.outerHTML : '';
+
+              // Create side-by-side layout with video player
+              const newLayoutHTML = `
+                <!-- Video Player (Left Side) -->
+                <div id="${langName}-video-player" class="bg-white rounded-lg p-3 border border-gray-300 w-80">
+                  <video id="${langName}-video" class="w-full h-24 rounded">
+                    Your browser does not support the video element.
+                  </video>
+                  <!-- Video Controls -->
+                  <div class="flex items-center gap-3 mt-2">
+                    <canvas id="${langName}-video-waveform" class="flex-1 h-6 bg-white rounded"></canvas>
+                    <button class="lang-video-btn w-8 h-8 bg-[#3840EB] rounded flex items-center justify-center hover:bg-blue-600 transition-colors" data-lang="${langName}" data-langcode="${langCode}">
+                      <svg class="video-play-icon" width="12" height="12" viewBox="0 0 14 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M2.91602 3.3277C2.91602 2.76119 2.91602 2.47794 3.03413 2.32179C3.13704 2.18577 3.29432 2.10159 3.46458 2.09143C3.66002 2.07976 3.8957 2.23688 4.36707 2.55112L10.5011 6.64051C10.8906 6.90016 11.0854 7.02999 11.1532 7.19363C11.2126 7.33669 11.2126 7.49748 11.1532 7.64054C11.0854 7.80418 10.8906 7.93401 10.5011 8.19367L4.36707 12.2831C3.8957 12.5973 3.66002 12.7544 3.46458 12.7427C3.29432 12.7326 3.13704 12.6484 3.03413 12.5124C2.91602 12.3562 2.91602 12.073 2.91602 11.5065V3.3277Z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                      <svg class="video-pause-icon hidden" width="12" height="12" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M8 5V15M12 5V15" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Content (Right Side) -->
+                <div class="flex-1 pl-4 min-h-0">
+                  <div class="text-[#3840EB] font-semibold">${title}</div>
+                  <div id="${langName}-text" class="mt-1 text-sm text-gray-700 max-h-16 overflow-y-auto">${textContent}</div>
+                  ${latencyContent}
+                </div>
+              `;
+
+              // Update the result div to use flex layout
+              resultDiv.className = "bg-white p-3 border border-gray-300 rounded-[10px] hover:border-[#3840eb] hover:bg-gray-100 flex items-start gap-4 max-h-32 overflow-hidden";
+              resultDiv.innerHTML = newLayoutHTML;
+
+              // Generate waveform for this video player
+              generateLanguageWaveform(`${langName}-video`);
+            }
+          }
+
+          // Load video data into the player (for One Shot mode)
+          if (videoData) {
+            const videoElement = document.getElementById(`${langName}-video`);
+            if (videoElement) {
+              // For One Shot mode, videoData would be the video blob
+              if (typeof videoData === 'string') {
+                // Base64 encoded video
+                const binaryString = atob(videoData);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                  bytes[i] = binaryString.charCodeAt(i);
+                }
+                const blob = new Blob([bytes], { type: 'video/mp4' });
+                const videoUrl = URL.createObjectURL(blob);
+                videoElement.src = videoUrl;
+              } else {
+                // For live mode, use original video file
+                videoElement.src = URL.createObjectURL(selectedVideoFile);
+              }
+            }
+          }
+
+          // Show the video player
+          const playerDiv = document.getElementById(`${langName}-video-player`);
+          if (playerDiv) {
+            playerDiv.classList.remove('hidden');
+          }
+        }
+      }
+
       function showLanguageAudioPlayer(langCode, audioData, text) {
+        // For video mode, show video player instead of audio player
+        if (isVideoStreaming) {
+          showLanguageVideoPlayer(langCode, null, text);
+          return;
+        }
+
         const langName = getLangNameFromCode(langCode);
         if (langName) {
           const audioPlayerDiv = document.getElementById(`${langName}-audio-player`);
@@ -2126,48 +2232,44 @@
           if (!audioPlayerDiv) {
             const resultDiv = document.getElementById(`${langName}-result`);
             if (resultDiv) {
-              // Restructure the entire language div for side-by-side layout
-              const resultDiv = document.getElementById(`${langName}-result`);
-              if (resultDiv) {
-                // Get current content
-                const titleElement = resultDiv.querySelector('.text-\\[\\#3840EB\\]') || resultDiv.querySelector('[class*="font-semibold"]');
-                const textElement = document.getElementById(`${langName}-text`);
-                const latencyElement = document.getElementById(`${langName}-latency`);
+              // Get current content
+              const titleElement = resultDiv.querySelector('.text-\\[\\#3840EB\\]') || resultDiv.querySelector('[class*="font-semibold"]');
+              const textElement = document.getElementById(`${langName}-text`);
+              const latencyElement = document.getElementById(`${langName}-latency`);
 
-                const title = titleElement ? titleElement.textContent : `Language`;
-                const textContent = textElement ? textElement.innerHTML : '';
-                const latencyContent = latencyElement ? latencyElement.outerHTML : '';
+              const title = titleElement ? titleElement.textContent : `Language`;
+              const textContent = textElement ? textElement.innerHTML : '';
+              const latencyContent = latencyElement ? latencyElement.outerHTML : '';
 
-                // Create new side-by-side layout
-                const newLayoutHTML = `
-                  <!-- Audio Player (Left Side) -->
-                  <div id="${langName}-audio-player" class="bg-white rounded-lg p-3 border border-gray-300 flex items-center gap-3 w-80">
-                    <audio id="${langName}-audio" class="hidden"></audio>
-                    <!-- Waveform -->
-                    <canvas id="${langName}-waveform" class="flex-1 h-8 bg-white rounded"></canvas>
-                    <!-- Play/Pause Button -->
-                    <button class="lang-audio-btn w-8 h-8 bg-[#3840EB] rounded flex items-center justify-center hover:bg-blue-600 transition-colors" data-lang="${langName}" data-langcode="${langCode}">
-                      <svg class="play-icon" width="12" height="12" viewBox="0 0 14 15" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M2.91602 3.3277C2.91602 2.76119 2.91602 2.47794 3.03413 2.32179C3.13704 2.18577 3.29432 2.10159 3.46458 2.09143C3.66002 2.07976 3.8957 2.23688 4.36707 2.55112L10.5011 6.64051C10.8906 6.90016 11.0854 7.02999 11.1532 7.19363C11.2126 7.33669 11.2126 7.49748 11.1532 7.64054C11.0854 7.80418 10.8906 7.93401 10.5011 8.19367L4.36707 12.2831C3.8957 12.5973 3.66002 12.7544 3.46458 12.7427C3.29432 12.7326 3.13704 12.6484 3.03413 12.5124C2.91602 12.3562 2.91602 12.073 2.91602 11.5065V3.3277Z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                      </svg>
-                      <svg class="pause-icon hidden" width="12" height="12" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <path d="M8 5V15M12 5V15" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                      </svg>
-                    </button>
-                  </div>
+              // Create side-by-side layout with audio player
+              const newLayoutHTML = `
+                <!-- Audio Player (Left Side) -->
+                <div id="${langName}-audio-player" class="bg-white rounded-lg p-3 border border-gray-300 flex items-center gap-3 w-80">
+                  <audio id="${langName}-audio" class="hidden"></audio>
+                  <!-- Waveform -->
+                  <canvas id="${langName}-waveform" class="flex-1 h-8 bg-white rounded"></canvas>
+                  <!-- Play/Pause Button -->
+                  <button class="lang-audio-btn w-8 h-8 bg-[#3840EB] rounded flex items-center justify-center hover:bg-blue-600 transition-colors" data-lang="${langName}" data-langcode="${langCode}">
+                    <svg class="play-icon" width="12" height="12" viewBox="0 0 14 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M2.91602 3.3277C2.91602 2.76119 2.91602 2.47794 3.03413 2.32179C3.13704 2.18577 3.29432 2.10159 3.46458 2.09143C3.66002 2.07976 3.8957 2.23688 4.36707 2.55112L10.5011 6.64051C10.8906 6.90016 11.0854 7.02999 11.1532 7.19363C11.2126 7.33669 11.2126 7.49748 11.1532 7.64054C11.0854 7.80418 10.8906 7.93401 10.5011 8.19367L4.36707 12.2831C3.8957 12.5973 3.66002 12.7544 3.46458 12.7427C3.29432 12.7326 3.13704 12.6484 3.03413 12.5124C2.91602 12.3562 2.91602 12.073 2.91602 11.5065V3.3277Z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <svg class="pause-icon hidden" width="12" height="12" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M8 5V15M12 5V15" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
 
-                  <!-- Content (Right Side) -->
-                  <div class="flex-1 pl-4 min-h-0">
-                    <div class="text-[#3840EB] font-semibold">${title}</div>
-                    <div id="${langName}-text" class="mt-1 text-sm text-gray-700 max-h-16 overflow-y-auto">${textContent}</div>
-                    ${latencyContent}
-                  </div>
-                `;
+                <!-- Content (Right Side) -->
+                <div class="flex-1 pl-4 min-h-0">
+                  <div class="text-[#3840EB] font-semibold">${title}</div>
+                  <div id="${langName}-text" class="mt-1 text-sm text-gray-700 max-h-16 overflow-y-auto">${textContent}</div>
+                  ${latencyContent}
+                </div>
+              `;
 
-                // Update the result div to use flex layout with max height
-                resultDiv.className = "bg-white p-3 border border-gray-300 rounded-[10px] hover:border-[#3840eb] hover:bg-gray-100 flex items-start gap-4 max-h-32 overflow-hidden";
-                resultDiv.innerHTML = newLayoutHTML;
-              }
+              // Update the result div to use flex layout
+              resultDiv.className = "bg-white p-3 border border-gray-300 rounded-[10px] hover:border-[#3840eb] hover:bg-gray-100 flex items-start gap-4 max-h-32 overflow-hidden";
+              resultDiv.innerHTML = newLayoutHTML;
 
               // Generate waveform for this language
               generateLanguageWaveform(langName);
@@ -2177,14 +2279,24 @@
           // Load audio data into the player
           const audioElement = document.getElementById(`${langName}-audio`);
           if (audioElement && audioData) {
-            const binaryString = atob(audioData);
-            const bytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-              bytes[i] = binaryString.charCodeAt(i);
+            if (audioData === 'original') {
+              // Use original selected audio file
+              const originalAudioPlayer = document.getElementById('audioPlayer');
+              if (originalAudioPlayer && originalAudioPlayer.src) {
+                audioElement.src = originalAudioPlayer.src;
+                console.log(`Loaded original audio file for ${langName}`);
+              }
+            } else {
+              // Use TTS audio data
+              const binaryString = atob(audioData);
+              const bytes = new Uint8Array(binaryString.length);
+              for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+              }
+              const blob = new Blob([bytes], { type: 'audio/mpeg' });
+              const audioUrl = URL.createObjectURL(blob);
+              audioElement.src = audioUrl;
             }
-            const blob = new Blob([bytes], { type: 'audio/mpeg' });
-            const audioUrl = URL.createObjectURL(blob);
-            audioElement.src = audioUrl;
           }
 
           // Show the audio player
@@ -2725,7 +2837,7 @@
         }
       });
 
-      // Language audio player controls
+      // Language audio and video player controls
       document.addEventListener('click', (e) => {
         if (e.target.closest('.lang-audio-btn')) {
           const button = e.target.closest('.lang-audio-btn');
@@ -2733,8 +2845,71 @@
           const langCode = button.dataset.langcode;
 
           playLanguageAudio(langName, langCode, button);
+        } else if (e.target.closest('.lang-video-btn')) {
+          const button = e.target.closest('.lang-video-btn');
+          const langName = button.dataset.lang;
+          const langCode = button.dataset.langcode;
+
+          playLanguageVideo(langName, langCode, button);
         }
       });
+
+      function playLanguageVideo(langName, langCode, button) {
+        const videoElement = document.getElementById(`${langName}-video`);
+        const playIcon = button.querySelector('.video-play-icon');
+        const pauseIcon = button.querySelector('.video-pause-icon');
+
+        if (!videoElement) {
+          console.log(`No video element available for ${langName}`);
+          return;
+        }
+
+        // Save current position if another video is playing
+        if (currentlyPlayingVideoLang && currentlyPlayingVideoLang !== langName) {
+          const currentVideo = document.getElementById(`${currentlyPlayingVideoLang}-video`);
+          if (currentVideo && !currentVideo.paused) {
+            sharedVideoPosition = currentVideo.currentTime;
+            console.log(`Saved video position: ${sharedVideoPosition.toFixed(2)}s`);
+            currentVideo.pause();
+          }
+
+          // Reset previous button
+          document.querySelectorAll('.lang-video-btn').forEach(btn => {
+            btn.querySelector('.video-play-icon').classList.remove('hidden');
+            btn.querySelector('.video-pause-icon').classList.add('hidden');
+          });
+        }
+
+        if (videoElement.paused) {
+          // Set the saved position before playing
+          videoElement.currentTime = sharedVideoPosition;
+          console.log(`Starting ${langName} video from position: ${sharedVideoPosition.toFixed(2)}s`);
+
+          // Play this language video
+          videoElement.play().then(() => {
+            playIcon.classList.add('hidden');
+            pauseIcon.classList.remove('hidden');
+            currentlyPlayingVideoLang = langName;
+            console.log(`Playing ${langName} video from ${sharedVideoPosition.toFixed(2)}s`);
+
+            // Update shared position as video plays
+            videoElement.addEventListener('timeupdate', () => {
+              sharedVideoPosition = videoElement.currentTime;
+            });
+
+          }).catch(error => {
+            console.log(`Failed to play ${langName} video:`, error);
+          });
+        } else {
+          // Pause this video and save position
+          sharedVideoPosition = videoElement.currentTime;
+          videoElement.pause();
+          playIcon.classList.remove('hidden');
+          pauseIcon.classList.add('hidden');
+          currentlyPlayingVideoLang = null;
+          console.log(`Paused ${langName} video at ${sharedVideoPosition.toFixed(2)}s`);
+        }
+      }
 
       function playLanguageAudio(langName, langCode, button) {
         const audioElement = document.getElementById(`${langName}-audio`);
