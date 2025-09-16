@@ -245,10 +245,28 @@
               <!-- Original Text -->
               <div
                 id="originalTextDisplay"
-                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] bg-white hover:border-[#3840eb] hover:bg-gray-100 mb-3"
+                class="hidden bg-white p-3 border border-gray-300 rounded-[10px] hover:border-[#3840eb] hover:bg-gray-100 flex items-start gap-4 max-h-32 overflow-hidden mb-3"
               >
-                <div class="text-[#3840EB]">Original Text:</div>
-                <div id="originalTextContent" class="mt-1 text-gray-900"></div>
+                <!-- Audio Player (Left Side) for Original -->
+                <div class="bg-white rounded-lg p-3 border border-gray-300 flex items-center gap-3 w-80">
+                  <!-- Waveform -->
+                  <canvas id="originalWaveform" class="flex-1 h-8 bg-white rounded"></canvas>
+                  <!-- Play/Pause Button -->
+                  <button id="originalAudioBtn" class="w-8 h-8 bg-gray-500 rounded flex items-center justify-center hover:bg-gray-600 transition-colors">
+                    <svg id="originalPlayIcon" width="12" height="12" viewBox="0 0 14 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M2.91602 3.3277C2.91602 2.76119 2.91602 2.47794 3.03413 2.32179C3.13704 2.18577 3.29432 2.10159 3.46458 2.09143C3.66002 2.07976 3.8957 2.23688 4.36707 2.55112L10.5011 6.64051C10.8906 6.90016 11.0854 7.02999 11.1532 7.19363C11.2126 7.33669 11.2126 7.49748 11.1532 7.64054C11.0854 7.80418 10.8906 7.93401 10.5011 8.19367L4.36707 12.2831C3.8957 12.5973 3.66002 12.7544 3.46458 12.7427C3.29432 12.7326 3.13704 12.6484 3.03413 12.5124C2.91602 12.3562 2.91602 12.073 2.91602 11.5065V3.3277Z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <svg id="originalPauseIcon" width="12" height="12" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" class="hidden">
+                      <path d="M8 5V15M12 5V15" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
+
+                <!-- Content (Right Side) -->
+                <div class="flex-1 pl-4 min-h-0">
+                  <div class="text-[#3840EB] font-semibold">Original Text:</div>
+                  <div id="originalTextContent" class="mt-1 text-sm text-gray-700 max-h-16 overflow-y-auto"></div>
+                </div>
               </div>
 
               <!-- Language Translation Grid -->
@@ -616,6 +634,11 @@
 
         // Generate waveform visualization
         generateWaveform(file);
+
+        // Generate waveform for original text div when it becomes visible
+        setTimeout(() => {
+          generateOriginalWaveform();
+        }, 100);
 
         // Store file and check One Shot mode
         selectedAudioFile = file;
@@ -1553,7 +1576,15 @@
               const data = JSON.parse(event.data);
               console.log(`Audio ${lang.code} received:`, data.type);
 
-              if (data.type === 'transcript' && data.original_text) {
+              if (data.type === 'transcript' && data.original_text && data.is_final) {
+                // Check for duplicates using timestamp + language combination
+                const uniqueKey = `${data.timestamp}-${lang.code}`;
+                if (processedTimestamps.has(uniqueKey)) {
+                  console.log(`Duplicate transcript detected for ${lang.code}, skipping...`);
+                  return;
+                }
+                processedTimestamps.add(uniqueKey);
+
                 const translatedText = data.translated_text || data.original_text;
 
                 // Show result immediately
@@ -1585,10 +1616,17 @@
                   document.getElementById('originalTextContent').innerHTML = existingOriginal + newOriginalEntry;
                 }
 
-                // Play TTS audio if available
+                // Store TTS audio data (don't auto-play)
                 if (data.audio_data) {
-                  playTTSAudio(data.audio_data, translatedText);
-                  console.log(`Audio TTS for ${lang.name}: ${translatedText.substring(0, 30)}...`);
+                  languageAudioData[lang.code] = {
+                    audioData: data.audio_data,
+                    text: translatedText,
+                    timestamp: new Date().toISOString()
+                  };
+
+                  // Show audio player for this language
+                  showLanguageAudioPlayer(lang.code, data.audio_data, translatedText);
+                  console.log(`TTS audio available for ${lang.name}: ${translatedText.substring(0, 30)}...`);
                 }
               }
             };
@@ -1794,10 +1832,36 @@
                     document.getElementById('originalTextContent').innerHTML = existingOriginal + newOriginalEntry;
                   }
 
-                  // Play TTS audio if available
+                  // Show TTS audio player if available
                   if (result.audio_data) {
-                    playTTSAudio(result.audio_data, result.translated_text);
-                    console.log(`Playing TTS audio for ${lang.name}: ${result.translated_text.substring(0, 30)}...`);
+                    console.log(`Creating audio player for ${lang.name}`);
+
+                    // Store audio data for this language
+                    languageAudioData[lang.code] = {
+                      audioData: result.audio_data,
+                      text: result.translated_text,
+                      timestamp: new Date().toISOString()
+                    };
+
+                    // Show audio player for this language
+                    showLanguageAudioPlayer(lang.code, result.audio_data, result.translated_text);
+                    console.log(`Audio player ready for ${lang.name}: ${result.translated_text.substring(0, 30)}...`);
+
+                    // Auto-play first TTS audio that completes (no original audio in One Shot mode)
+                    if (!firstTTSReceived) {
+                      firstTTSReceived = true;
+                      console.log(`First TTS completed for ${lang.name}, starting playback immediately`);
+
+                      // Auto-play first TTS audio from beginning
+                      setTimeout(() => {
+                        const firstLangButton = document.querySelector(`[data-langcode="${lang.code}"]`);
+                        if (firstLangButton) {
+                          console.log(`Auto-playing first TTS: ${lang.name}`);
+                          sharedAudioPosition = 0; // Start from beginning for first TTS
+                          playLanguageAudio(mappedLangName, lang.code, firstLangButton);
+                        }
+                      }, 500);
+                    }
                   }
                 } else {
                   console.log(`ERROR: Could not find element ${mappedLangName}-result`);
@@ -1828,7 +1892,7 @@
 
           // Hide progress after starting all requests
           document.getElementById('translationProgress').classList.add('hidden');
-          console.log(`Started 12 parallel /translate-file API calls - results will appear as they complete`);
+          console.log(`Started 12 parallel /translate-file API calls - waiting for first completion to start TTS playback`);
 
         } catch (error) {
           console.error('Audio batch processing error:', error);
@@ -2010,29 +2074,194 @@
         }
       }
 
-      // TTS Audio playback functionality (exact copy from simple_test.html)
+      // TTS Audio playback functionality with individual language players
       let audioQueue = [];
       let isPlayingAudio = false;
       let collectedAudioClips = []; // Store all received audio for download
+      let languageAudioData = {}; // Store audio data for each language
+      let currentlyPlayingLang = null;
+      let sharedAudioPosition = 0; // Shared position across all language audios
+      let firstTTSReceived = false; // Track if we've received first TTS audio
 
-      function queueAudio(base64AudioData, text) {
-        // Add audio to queue
-        audioQueue.push({ audioData: base64AudioData, text: text });
-        console.log(`Queued audio (${audioQueue.length} in queue): "${text}"`);
+      function queueAudio(base64AudioData, text, langCode = 'default') {
+        // Store audio data for specific language
+        if (langCode && langCode !== 'default') {
+          languageAudioData[langCode] = {
+            audioData: base64AudioData,
+            text: text,
+            timestamp: new Date().toISOString()
+          };
+
+          // Show audio player for this language
+          showLanguageAudioPlayer(langCode, base64AudioData, text);
+        }
+
+        // Add to global queue for sequential playback
+        audioQueue.push({ audioData: base64AudioData, text: text, langCode: langCode });
+        console.log(`Queued audio (${audioQueue.length} in queue): "${text}" [${langCode}]`);
 
         // Store for download functionality
         collectedAudioClips.push({
           audio: base64AudioData,
           text: text,
+          langCode: langCode,
           timestamp: new Date().toISOString()
         });
 
         // Update audio count display if element exists
         updateAudioCount();
 
-        // Start playing if not already playing
-        if (!isPlayingAudio) {
+        // Auto-play first audio if none playing
+        if (!isPlayingAudio && audioQueue.length === 1) {
           playNextAudio();
+        }
+      }
+
+      function showLanguageAudioPlayer(langCode, audioData, text) {
+        const langName = getLangNameFromCode(langCode);
+        if (langName) {
+          const audioPlayerDiv = document.getElementById(`${langName}-audio-player`);
+
+          // Create audio player if it doesn't exist
+          if (!audioPlayerDiv) {
+            const resultDiv = document.getElementById(`${langName}-result`);
+            if (resultDiv) {
+              // Restructure the entire language div for side-by-side layout
+              const resultDiv = document.getElementById(`${langName}-result`);
+              if (resultDiv) {
+                // Get current content
+                const titleElement = resultDiv.querySelector('.text-\\[\\#3840EB\\]') || resultDiv.querySelector('[class*="font-semibold"]');
+                const textElement = document.getElementById(`${langName}-text`);
+                const latencyElement = document.getElementById(`${langName}-latency`);
+
+                const title = titleElement ? titleElement.textContent : `Language`;
+                const textContent = textElement ? textElement.innerHTML : '';
+                const latencyContent = latencyElement ? latencyElement.outerHTML : '';
+
+                // Create new side-by-side layout
+                const newLayoutHTML = `
+                  <!-- Audio Player (Left Side) -->
+                  <div id="${langName}-audio-player" class="bg-white rounded-lg p-3 border border-gray-300 flex items-center gap-3 w-80">
+                    <audio id="${langName}-audio" class="hidden"></audio>
+                    <!-- Waveform -->
+                    <canvas id="${langName}-waveform" class="flex-1 h-8 bg-white rounded"></canvas>
+                    <!-- Play/Pause Button -->
+                    <button class="lang-audio-btn w-8 h-8 bg-[#3840EB] rounded flex items-center justify-center hover:bg-blue-600 transition-colors" data-lang="${langName}" data-langcode="${langCode}">
+                      <svg class="play-icon" width="12" height="12" viewBox="0 0 14 15" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M2.91602 3.3277C2.91602 2.76119 2.91602 2.47794 3.03413 2.32179C3.13704 2.18577 3.29432 2.10159 3.46458 2.09143C3.66002 2.07976 3.8957 2.23688 4.36707 2.55112L10.5011 6.64051C10.8906 6.90016 11.0854 7.02999 11.1532 7.19363C11.2126 7.33669 11.2126 7.49748 11.1532 7.64054C11.0854 7.80418 10.8906 7.93401 10.5011 8.19367L4.36707 12.2831C3.8957 12.5973 3.66002 12.7544 3.46458 12.7427C3.29432 12.7326 3.13704 12.6484 3.03413 12.5124C2.91602 12.3562 2.91602 12.073 2.91602 11.5065V3.3277Z" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                      <svg class="pause-icon hidden" width="12" height="12" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M8 5V15M12 5V15" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                      </svg>
+                    </button>
+                  </div>
+
+                  <!-- Content (Right Side) -->
+                  <div class="flex-1 pl-4 min-h-0">
+                    <div class="text-[#3840EB] font-semibold">${title}</div>
+                    <div id="${langName}-text" class="mt-1 text-sm text-gray-700 max-h-16 overflow-y-auto">${textContent}</div>
+                    ${latencyContent}
+                  </div>
+                `;
+
+                // Update the result div to use flex layout with max height
+                resultDiv.className = "bg-white p-3 border border-gray-300 rounded-[10px] hover:border-[#3840eb] hover:bg-gray-100 flex items-start gap-4 max-h-32 overflow-hidden";
+                resultDiv.innerHTML = newLayoutHTML;
+              }
+
+              // Generate waveform for this language
+              generateLanguageWaveform(langName);
+            }
+          }
+
+          // Load audio data into the player
+          const audioElement = document.getElementById(`${langName}-audio`);
+          if (audioElement && audioData) {
+            const binaryString = atob(audioData);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+            }
+            const blob = new Blob([bytes], { type: 'audio/mpeg' });
+            const audioUrl = URL.createObjectURL(blob);
+            audioElement.src = audioUrl;
+          }
+
+          // Show the audio player
+          const playerDiv = document.getElementById(`${langName}-audio-player`);
+          if (playerDiv) {
+            playerDiv.classList.remove('hidden');
+          }
+        }
+      }
+
+      function generateLanguageWaveform(langName) {
+        const canvas = document.getElementById(`${langName}-waveform`);
+        if (!canvas) return;
+
+        const ctx = canvas.getContext('2d');
+        canvas.width = canvas.offsetWidth;
+        canvas.height = 32;
+
+        // Clear with white background
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw simple dummy waveform bars (like original audio player)
+        ctx.fillStyle = 'black';
+
+        const barWidth = 3;
+        const barSpacing = 2;
+        const barCount = Math.floor(canvas.width / (barWidth + barSpacing));
+
+        // Simple dummy heights pattern
+        const heights = [8, 12, 6, 16, 10, 14, 8, 18, 12, 6, 16, 10, 8, 14, 12, 6, 16, 8, 12, 10];
+
+        for (let i = 0; i < barCount; i++) {
+          const x = i * (barWidth + barSpacing);
+          const height = heights[i % heights.length];
+          const y = (canvas.height - height) / 2;
+
+          // Draw rounded rectangle (like original)
+          const radius = barWidth / 2;
+          ctx.beginPath();
+          ctx.roundRect(x, y, barWidth, height, radius);
+          ctx.fill();
+        }
+      }
+
+      function generateOriginalWaveform() {
+        const canvas = document.getElementById('originalWaveform');
+        if (!canvas) return;
+
+        const ctx = canvas.getContext('2d');
+        canvas.width = canvas.offsetWidth;
+        canvas.height = 32;
+
+        // Clear with white background
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw same dummy waveform as language players
+        ctx.fillStyle = 'black';
+
+        const barWidth = 3;
+        const barSpacing = 2;
+        const barCount = Math.floor(canvas.width / (barWidth + barSpacing));
+
+        // Same dummy heights pattern
+        const heights = [8, 12, 6, 16, 10, 14, 8, 18, 12, 6, 16, 10, 8, 14, 12, 6, 16, 8, 12, 10];
+
+        for (let i = 0; i < barCount; i++) {
+          const x = i * (barWidth + barSpacing);
+          const height = heights[i % heights.length];
+          const y = (canvas.height - height) / 2;
+
+          // Draw rounded rectangle
+          const radius = barWidth / 2;
+          ctx.beginPath();
+          ctx.roundRect(x, y, barWidth, height, radius);
+          ctx.fill();
         }
       }
 
@@ -2041,9 +2270,9 @@
         console.log(`Total audio clips collected: ${collectedAudioClips.length}`);
       }
 
-      function playTTSAudio(base64AudioData, text = 'Unknown') {
-        // Use the queueAudio system like simple_test.html
-        queueAudio(base64AudioData, text);
+      function playTTSAudio(base64AudioData, text = 'Unknown', langCode = 'default') {
+        // Use the queueAudio system with language code
+        queueAudio(base64AudioData, text, langCode);
       }
 
       function playNextAudio() {
@@ -2495,6 +2724,74 @@
           menu.classList.add("hidden");
         }
       });
+
+      // Language audio player controls
+      document.addEventListener('click', (e) => {
+        if (e.target.closest('.lang-audio-btn')) {
+          const button = e.target.closest('.lang-audio-btn');
+          const langName = button.dataset.lang;
+          const langCode = button.dataset.langcode;
+
+          playLanguageAudio(langName, langCode, button);
+        }
+      });
+
+      function playLanguageAudio(langName, langCode, button) {
+        const audioElement = document.getElementById(`${langName}-audio`);
+        const playIcon = button.querySelector('.play-icon');
+        const pauseIcon = button.querySelector('.pause-icon');
+
+        if (!audioElement || !languageAudioData[langCode]) {
+          console.log(`No audio data available for ${langName}`);
+          return;
+        }
+
+        // Save current position if something else is playing
+        if (currentlyPlayingLang && currentlyPlayingLang !== langName) {
+          const currentAudio = document.getElementById(`${currentlyPlayingLang}-audio`);
+          if (currentAudio && !currentAudio.paused) {
+            sharedAudioPosition = currentAudio.currentTime;
+            console.log(`Saved audio position: ${sharedAudioPosition.toFixed(2)}s`);
+            currentAudio.pause();
+          }
+
+          // Reset previous button
+          document.querySelectorAll('.lang-audio-btn').forEach(btn => {
+            btn.querySelector('.play-icon').classList.remove('hidden');
+            btn.querySelector('.pause-icon').classList.add('hidden');
+          });
+        }
+
+        if (audioElement.paused) {
+          // Set the saved position before playing
+          audioElement.currentTime = sharedAudioPosition;
+          console.log(`Starting ${langName} audio from position: ${sharedAudioPosition.toFixed(2)}s`);
+
+          // Play this language audio
+          audioElement.play().then(() => {
+            playIcon.classList.add('hidden');
+            pauseIcon.classList.remove('hidden');
+            currentlyPlayingLang = langName;
+            console.log(`Playing ${langName} TTS audio from ${sharedAudioPosition.toFixed(2)}s`);
+
+            // Update shared position as this audio plays
+            audioElement.addEventListener('timeupdate', () => {
+              sharedAudioPosition = audioElement.currentTime;
+            });
+
+          }).catch(error => {
+            console.log(`Failed to play ${langName} audio:`, error);
+          });
+        } else {
+          // Pause this audio and save position
+          sharedAudioPosition = audioElement.currentTime;
+          audioElement.pause();
+          playIcon.classList.remove('hidden');
+          pauseIcon.classList.add('hidden');
+          currentlyPlayingLang = null;
+          console.log(`Paused ${langName} TTS audio at ${sharedAudioPosition.toFixed(2)}s`);
+        }
+      }
 
       // Connect WebSocket on page load
       window.addEventListener("load", () => {
