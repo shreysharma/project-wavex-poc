@@ -1270,7 +1270,7 @@
 
       }
 
-      // Audio file processing functions (fixed to match simple_test.html)
+      // Audio file processing functions - 12 separate WebSocket connections
       async function startAudioStreaming() {
         try {
           if (!selectedAudioFile) {
@@ -1278,21 +1278,140 @@
             return;
           }
 
-          // Get selected language for translation
-          const outputLang = document.getElementById("selectedLang").value;
+          console.log(`Starting audio processing with 12 separate WebSocket connections: ${selectedAudioFile.name}`);
 
-          console.log(`Starting audio file streaming: ${selectedAudioFile.name} (${selectedAudioFile.size} bytes)`);
-          console.log(`Languages: hi → ${outputLang}`);
-
-          // Send language settings to backend (use specific language like simple_test.html)
-          if (websocket && websocket.readyState === WebSocket.OPEN) {
-            websocket.send(JSON.stringify({
-              type: 'language_settings',
-              input_language: 'hi',
-              output_language: 'en'  // Always use English for consistent translation
-            }));
-            console.log(`Sent language settings: hi → en`);
+          // Update status to indicate audio mode
+          const headerStatus = document.getElementById("headerConnectionStatus");
+          if (headerStatus) {
+            headerStatus.textContent = "Audio Mode: Connecting 12 Languages";
+            headerStatus.className = "bg-orange-100 w-fit px-3 py-1 rounded text-sm text-orange-700";
           }
+
+          // Close existing main WebSocket if open
+          if (websocket && websocket.readyState === WebSocket.OPEN) {
+            websocket.close();
+            console.log("Closed main WebSocket connection for audio mode");
+          }
+
+          // Define 12 target languages (same as video)
+          const targetLanguages = [
+            { code: "hi", name: "Hindi" },
+            { code: "en", name: "English" },
+            { code: "ta", name: "Tamil" },
+            { code: "te", name: "Telugu" },
+            { code: "bn", name: "Bengali" },
+            { code: "mr", name: "Marathi" },
+            { code: "gu", name: "Gujarati" },
+            { code: "kn", name: "Kannada" },
+            { code: "ml", name: "Malayalam" },
+            { code: "pa", name: "Punjabi" },
+            { code: "ur", name: "Urdu" },
+            { code: "or", name: "Odia" }
+          ];
+
+          // Create 12 separate WebSocket connections for audio
+          audioWebSockets = [];
+          let connectedCount = 0;
+
+          for (const lang of targetLanguages) {
+            try {
+              const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+              const wsUrl = `${protocol}//${window.location.host}/stt-test`;
+              const ws = new WebSocket(wsUrl);
+
+              ws.onopen = function() {
+                console.log(`Audio WebSocket ${lang.code} connected`);
+
+                // Send language settings immediately
+                ws.send(JSON.stringify({
+                  type: 'language_settings',
+                  input_language: 'hi',
+                  output_language: lang.code
+                }));
+                console.log(`Sent audio language settings for ${lang.name}: hi → ${lang.code}`);
+
+                connectedCount++;
+                if (connectedCount === targetLanguages.length) {
+                  console.log("All 12 Audio WebSocket connections established");
+
+                  // Update status
+                  const headerStatus = document.getElementById("headerConnectionStatus");
+                  if (headerStatus) {
+                    headerStatus.textContent = "Audio Mode: 12 Languages Connected";
+                    headerStatus.className = "bg-orange-100 w-fit px-3 py-1 rounded text-sm text-orange-700";
+                  }
+
+                  // Start audio file processing after all connections ready
+                  processAudioFileStreaming();
+                }
+              };
+
+              ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                console.log(`Audio ${lang.code} received:`, data.type, data);
+
+                if (data.type === 'transcript' && data.original_text) {
+                  const translatedText = data.translated_text || data.original_text;
+
+                  // Show result for this specific language
+                  const langName = getLangNameFromCode(lang.code);
+                  if (langName) {
+                    document.getElementById('languageGrid').style.display = 'flex';
+                    document.getElementById('noTranslationsMsg').style.display = 'none';
+
+                    const resultDiv = document.getElementById(`${langName}-result`);
+                    if (resultDiv) {
+                      resultDiv.classList.remove('hidden');
+                      const existingText = document.getElementById(`${langName}-text`).innerHTML || '';
+                      const newEntry = `<div class="mb-2 p-2 bg-white rounded border-l-4 border-orange-400">
+                        <div class="font-medium">${translatedText}</div>
+                        <div class="text-xs text-gray-500 mt-1">[STT:${data.latency?.stt_ms || 0}ms, Trans:${data.latency?.translate_ms || 0}ms, TTS:${data.latency?.tts_ms || 0}ms, Total:${data.latency?.total_ms || 0}ms]</div>
+                      </div>`;
+                      document.getElementById(`${langName}-text`).innerHTML = existingText + newEntry;
+                    }
+                  }
+
+                  // Show original text (only once per transcript)
+                  if (lang.code === 'en') { // Use English connection for original text display
+                    document.getElementById('originalTextDisplay').classList.remove('hidden');
+                    const existingOriginal = document.getElementById('originalTextContent').innerHTML || '';
+                    const newOriginalEntry = `<div class="mb-1 text-sm">
+                      <div class="font-medium">Audio: ${data.original_text}</div>
+                      <div class="text-xs text-gray-500">[Multi-Language Processing]</div>
+                    </div>`;
+                    document.getElementById('originalTextContent').innerHTML = existingOriginal + newOriginalEntry;
+                  }
+
+                  // Play TTS audio if available
+                  if (data.audio_data) {
+                    playTTSAudio(data.audio_data, translatedText);
+                    console.log(`Playing TTS audio for ${lang.name}:`, translatedText);
+                  }
+                }
+              };
+
+              ws.onclose = function() {
+                console.log(`Audio WebSocket ${lang.code} disconnected`);
+              };
+
+              ws.onerror = function(error) {
+                console.log(`Audio WebSocket ${lang.code} error:`, error);
+              };
+
+              // Store the WebSocket with language info
+              audioWebSockets.push({ ws, lang });
+
+            } catch (error) {
+              console.error(`Failed to create Audio WebSocket for ${lang.code}:`, error);
+            }
+          }
+        } catch (error) {
+          console.error(`Error setting up audio connections: ${error.message}`);
+        }
+      }
+
+      // Process audio file streaming after all connections are ready
+      async function processAudioFileStreaming() {
 
           // Create audio context and decode the file (exactly like simple_test.html)
           const audioContext = new AudioContext({ sampleRate: 16000 });
@@ -1347,115 +1466,374 @@
 
             // Log progress occasionally
             const progress = (currentIndex / channelData.length * 100).toFixed(1);
-            if (currentIndex % (chunkSize * 10) === 0) { // Log every ~10 chunks
+            if (Math.floor(progress) % 10 === 0) {
               console.log(`Audio streaming progress: ${progress}%`);
             }
 
             currentIndex += chunkSize;
-          }, chunkDuration * 1000); // Send chunks at real-time intervals
+          }, chunkDuration * 1000); // Close setInterval with timing parameter
+      } // Close processAudioFileStreaming function
 
-          // Store interval for cleanup
-          this.fileStreamInterval = fileStreamInterval;
-
-          console.log('Audio file streaming started - processing audio in real-time');
-
-          // Start playing the audio file so user can hear it
-          const audioPlayer = document.getElementById('audioPlayer');
-          try {
-            await audioPlayer.play();
-            console.log('Audio playback started');
-          } catch (playError) {
-            console.log('Audio autoplay failed, user interaction required:', playError);
+      // Live audio streaming - 12 WebSocket connections like video mode
+      async function startAudioStreaming() {
+        try {
+          if (!selectedAudioFile) {
+            console.log("No audio file selected");
+            return;
           }
 
+          console.log(`Starting audio live streaming with 12 WebSocket connections: ${selectedAudioFile.name}`);
+
+          // Update status
+          const headerStatus = document.getElementById("headerConnectionStatus");
+          if (headerStatus) {
+            headerStatus.textContent = "Audio Mode: Connecting 12 Languages";
+            headerStatus.className = "bg-orange-100 w-fit px-3 py-1 rounded text-sm text-orange-700";
+          }
+
+          // Close existing main WebSocket if open
+          if (websocket && websocket.readyState === WebSocket.OPEN) {
+            websocket.close();
+            console.log("Closed main WebSocket for audio mode");
+          }
+
+          // Define 12 target languages
+          const targetLanguages = [
+            { code: "hi", name: "Hindi" },
+            { code: "en", name: "English" },
+            { code: "ta", name: "Tamil" },
+            { code: "te", name: "Telugu" },
+            { code: "bn", name: "Bengali" },
+            { code: "mr", name: "Marathi" },
+            { code: "gu", name: "Gujarati" },
+            { code: "kn", name: "Kannada" },
+            { code: "ml", name: "Malayalam" },
+            { code: "pa", name: "Punjabi" },
+            { code: "ur", name: "Urdu" },
+            { code: "or", name: "Odia" }
+          ];
+
+          // Create 12 WebSocket connections for audio
+          audioWebSockets = [];
+          let connectedCount = 0;
+
+          targetLanguages.forEach(lang => {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/stt-test`;
+            const ws = new WebSocket(wsUrl);
+
+            ws.onopen = function() {
+              console.log(`Audio WebSocket ${lang.code} connected`);
+
+              // Send language settings immediately
+              ws.send(JSON.stringify({
+                type: 'language_settings',
+                input_language: 'hi',
+                output_language: lang.code
+              }));
+              console.log(`Audio language settings: hi → ${lang.code}`);
+
+              connectedCount++;
+              if (connectedCount === targetLanguages.length) {
+                console.log("All 12 Audio WebSockets connected - starting streaming");
+
+                // Update status
+                const headerStatus = document.getElementById("headerConnectionStatus");
+                if (headerStatus) {
+                  headerStatus.textContent = "Audio Mode: 12 Languages Connected";
+                  headerStatus.className = "bg-orange-100 w-fit px-3 py-1 rounded text-sm text-orange-700";
+                }
+
+                // Start audio file streaming
+                startAudioFileStreaming();
+              }
+            };
+
+            ws.onmessage = function(event) {
+              const data = JSON.parse(event.data);
+              console.log(`Audio ${lang.code} received:`, data.type);
+
+              if (data.type === 'transcript' && data.original_text) {
+                const translatedText = data.translated_text || data.original_text;
+
+                // Show result immediately
+                const langName = getLangNameFromCode(lang.code);
+                if (langName) {
+                  document.getElementById('languageGrid').style.display = 'flex';
+                  document.getElementById('noTranslationsMsg').style.display = 'none';
+
+                  const resultDiv = document.getElementById(`${langName}-result`);
+                  if (resultDiv) {
+                    resultDiv.classList.remove('hidden');
+                    const existingText = document.getElementById(`${langName}-text`).innerHTML || '';
+                    const newEntry = `<div class="mb-2 p-2 bg-white rounded border-l-4 border-orange-400">
+                      <div class="font-medium">${translatedText}</div>
+                      <div class="text-xs text-gray-500 mt-1">[STT:${data.latency?.stt_ms || 0}ms, Trans:${data.latency?.translate_ms || 0}ms, Total:${data.latency?.total_ms || 0}ms]</div>
+                    </div>`;
+                    document.getElementById(`${langName}-text`).innerHTML = existingText + newEntry;
+                  }
+                }
+
+                // Show original text once
+                if (lang.code === 'en') {
+                  document.getElementById('originalTextDisplay').classList.remove('hidden');
+                  const existingOriginal = document.getElementById('originalTextContent').innerHTML || '';
+                  const newOriginalEntry = `<div class="mb-1 text-sm">
+                    <div class="font-medium">Audio Live: ${data.original_text}</div>
+                    <div class="text-xs text-gray-500">[Real-time streaming]</div>
+                  </div>`;
+                  document.getElementById('originalTextContent').innerHTML = existingOriginal + newOriginalEntry;
+                }
+
+                // Play TTS audio if available
+                if (data.audio_data) {
+                  playTTSAudio(data.audio_data, translatedText);
+                  console.log(`Audio TTS for ${lang.name}: ${translatedText.substring(0, 30)}...`);
+                }
+              }
+            };
+
+            audioWebSockets.push({ ws, lang });
+          });
+
         } catch (error) {
-          console.error(`Error starting audio streaming: ${error.message}`);
-          stopAudioStreaming();
+          console.error('Audio streaming setup error:', error);
+        }
+      }
+
+      // Start audio file streaming after WebSocket connections are ready
+      async function startAudioFileStreaming() {
+        try {
+          console.log("Starting audio file streaming to 12 WebSockets");
+
+          // Decode audio file
+          const audioContext = new AudioContext({ sampleRate: 16000 });
+          const arrayBuffer = await selectedAudioFile.arrayBuffer();
+          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+          console.log(`Audio decoded: ${audioBuffer.duration.toFixed(2)}s, ${audioBuffer.numberOfChannels} channels`);
+
+          // Convert to PCM and stream chunks
+          const channelData = audioBuffer.getChannelData(0);
+          const chunkSize = 2048;
+          const chunkDuration = chunkSize / 16000;
+          let currentIndex = 0;
+
+          isAudioStreaming = true;
+
+          const fileStreamInterval = setInterval(() => {
+            if (!isAudioStreaming || audioWebSockets.length === 0) {
+              clearInterval(fileStreamInterval);
+              return;
+            }
+
+            if (currentIndex >= channelData.length) {
+              console.log('Audio file streaming completed');
+              clearInterval(fileStreamInterval);
+              stopAudioStreaming();
+              return;
+            }
+
+            // Extract chunk
+            const chunkEnd = Math.min(currentIndex + chunkSize, channelData.length);
+            const chunk = channelData.slice(currentIndex, chunkEnd);
+
+            // Convert to PCM
+            const pcmBuffer = new Int16Array(chunk.length);
+            for (let i = 0; i < chunk.length; i++) {
+              const sample = Math.max(-1, Math.min(1, chunk[i]));
+              pcmBuffer[i] = Math.round(sample * 32767);
+            }
+
+            // Send to all 12 WebSockets
+            let sentCount = 0;
+            audioWebSockets.forEach(({ws, lang}) => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(pcmBuffer.buffer);
+                sentCount++;
+              }
+            });
+
+            const progress = (currentIndex / channelData.length * 100).toFixed(1);
+            if (currentIndex % (chunkSize * 10) === 0) {
+              console.log(`Audio streaming: ${progress}% (sent to ${sentCount} WebSockets)`);
+            }
+
+            currentIndex += chunkSize;
+          }, chunkDuration * 1000);
+
+        } catch (error) {
+          console.error('Audio file streaming error:', error);
         }
       }
 
       function stopAudioStreaming() {
         isAudioStreaming = false;
-        console.log("Audio file streaming stopped");
+        console.log("Audio streaming stopped");
 
-        // Send stop command to backend
-        if (websocket && websocket.readyState === WebSocket.OPEN) {
-          websocket.send(JSON.stringify({ type: "stop_streaming" }));
-        }
+        // Close all audio WebSockets
+        audioWebSockets.forEach(({ws, lang}) => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.close();
+          }
+        });
+        audioWebSockets = [];
       }
 
-      // One Shot Mode: Complete audio file processing
+      // One Shot Mode: 12 parallel /translate-file API calls for audio
       async function processAudioFileCompleteAPI(file) {
         try {
-          console.log(`Processing complete audio file: ${file.name}`);
+          console.log(`Processing audio file with 12 parallel /translate-file API calls: ${file.name}`);
 
           // Update status
           const headerStatus = document.getElementById("headerConnectionStatus");
           if (headerStatus) {
-            headerStatus.textContent = "One Shot: Processing Audio File";
+            headerStatus.textContent = "One Shot: Processing Audio - 12 Languages";
             headerStatus.className = "bg-yellow-100 w-fit px-3 py-1 rounded text-sm text-yellow-700";
           }
 
           // Show progress
           document.getElementById('translationProgress').classList.remove('hidden');
-          document.getElementById('progressText').textContent = 'Processing complete audio file...';
+          document.getElementById('progressText').textContent = 'Converting audio to PCM...';
 
-          const formData = new FormData();
-          formData.append('file', file);
-          formData.append('input_language', 'hi');
-          formData.append('output_language', document.getElementById('selectedLang').value);
+          // Create audio context and decode the file (exactly like simple_test.html)
+          const audioContext = new AudioContext({ sampleRate: 16000 });
+          const arrayBuffer = await file.arrayBuffer();
+          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-          const response = await fetch('/translate-file', {
-            method: 'POST',
-            body: formData
+          console.log(`Audio decoded: ${audioBuffer.duration.toFixed(2)}s, ${audioBuffer.numberOfChannels} channels`);
+
+          // Convert entire file to 16-bit PCM mono at 16kHz
+          const channelData = audioBuffer.getChannelData(0);
+          const totalSamples = channelData.length;
+          const fileSizeMB = (totalSamples * 2 / 1024 / 1024).toFixed(2);
+
+          // Convert the ENTIRE file to PCM
+          const pcmBuffer = new Int16Array(totalSamples);
+          for (let i = 0; i < totalSamples; i++) {
+            const sample = Math.max(-1, Math.min(1, channelData[i]));
+            pcmBuffer[i] = Math.round(sample * 32767);
+          }
+
+          console.log(`Making 12 parallel /translate-file API calls with ${fileSizeMB} MB PCM data...`);
+          document.getElementById('progressText').textContent = 'Making 12 parallel API calls...';
+
+          // Define 12 target languages
+          const targetLanguages = [
+            { code: "hi", name: "Hindi" },
+            { code: "en", name: "English" },
+            { code: "ta", name: "Tamil" },
+            { code: "te", name: "Telugu" },
+            { code: "bn", name: "Bengali" },
+            { code: "mr", name: "Marathi" },
+            { code: "gu", name: "Gujarati" },
+            { code: "kn", name: "Kannada" },
+            { code: "ml", name: "Malayalam" },
+            { code: "pa", name: "Punjabi" },
+            { code: "ur", name: "Urdu" },
+            { code: "or", name: "Odia" }
+          ];
+
+          // Create PCM blob once
+          const pcmBlob = new Blob([pcmBuffer.buffer], { type: 'audio/raw' });
+
+          // Show results immediately as they complete (don't wait for all)
+          document.getElementById('languageGrid').style.display = 'flex';
+          document.getElementById('noTranslationsMsg').style.display = 'none';
+
+          // Make API requests and show results immediately when each completes
+          targetLanguages.forEach(async (lang) => {
+            try {
+              console.log(`Starting /translate-file for ${lang.name}...`);
+
+              const formData = new FormData();
+              formData.append('file', pcmBlob, 'audio.raw');
+              formData.append('input_language', 'hi');
+              formData.append('output_language', lang.code);
+
+              const response = await fetch('/translate-file', {
+                method: 'POST',
+                body: formData
+              });
+
+              if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+              }
+
+              const result = await response.json();
+
+              if (!result.success) {
+                throw new Error(result.error || 'Translation failed');
+              }
+
+              console.log(`Completed /translate-file for ${lang.name}: ${result.translated_text.substring(0, 50)}...`);
+
+              // Show result immediately
+              const mappedLangName = getLangNameFromCode(lang.code);
+              console.log(`Immediately showing result for ${lang.name} (${mappedLangName})`);
+
+              if (mappedLangName) {
+                const resultDiv = document.getElementById(`${mappedLangName}-result`);
+                if (resultDiv) {
+                  resultDiv.classList.remove('hidden');
+                  const existingText = document.getElementById(`${mappedLangName}-text`).innerHTML || '';
+                  const newEntry = `<div class="mb-2 p-2 bg-white rounded border-l-4 border-yellow-400">
+                    <div class="font-medium">${result.translated_text}</div>
+                    <div class="text-xs text-gray-500 mt-1">[STT:${result.latency.stt_ms}ms, Trans:${result.latency.translate_ms}ms, TTS:${result.latency.tts_ms}ms, Total:${result.latency.total_ms}ms]</div>
+                  </div>`;
+                  document.getElementById(`${mappedLangName}-text`).innerHTML = existingText + newEntry;
+
+                  // Show original text from first successful result
+                  if (lang.code === 'en' && result.original_text) {
+                    document.getElementById('originalTextDisplay').classList.remove('hidden');
+                    const existingOriginal = document.getElementById('originalTextContent').innerHTML || '';
+                    const newOriginalEntry = `<div class="mb-1 text-sm">
+                      <div class="font-medium">Audio Batch: ${result.original_text}</div>
+                      <div class="text-xs text-gray-500">[Showing results as they complete]</div>
+                    </div>`;
+                    document.getElementById('originalTextContent').innerHTML = existingOriginal + newOriginalEntry;
+                  }
+
+                  // Play TTS audio if available
+                  if (result.audio_data) {
+                    playTTSAudio(result.audio_data, result.translated_text);
+                    console.log(`Playing TTS audio for ${lang.name}: ${result.translated_text.substring(0, 30)}...`);
+                  }
+                } else {
+                  console.log(`ERROR: Could not find element ${mappedLangName}-result`);
+                }
+              } else {
+                console.log(`ERROR: Could not map ${lang.code} to element name`);
+              }
+
+            } catch (error) {
+              console.error(`/translate-file failed for ${lang.code}:`, error);
+
+              // Show error immediately
+              const mappedLangName = getLangNameFromCode(lang.code);
+              if (mappedLangName) {
+                const resultDiv = document.getElementById(`${mappedLangName}-result`);
+                if (resultDiv) {
+                  resultDiv.classList.remove('hidden');
+                  const existingText = document.getElementById(`${mappedLangName}-text`).innerHTML || '';
+                  const errorEntry = `<div class="mb-2 p-2 bg-white rounded border-l-4 border-red-400">
+                    <div class="font-medium text-red-600">[API Error: ${error.message}]</div>
+                    <div class="text-xs text-gray-500 mt-1">[Failed]</div>
+                  </div>`;
+                  document.getElementById(`${mappedLangName}-text`).innerHTML = existingText + errorEntry;
+                }
+              }
+            }
           });
 
-          if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-          }
-
-          const result = await response.json();
-
-          if (!result.success) {
-            throw new Error(result.error || 'Audio processing failed');
-          }
-
-          // Hide progress and show results
+          // Hide progress after starting all requests
           document.getElementById('translationProgress').classList.add('hidden');
-
-          // Show original text
-          document.getElementById('originalTextDisplay').classList.remove('hidden');
-          const existingOriginal = document.getElementById('originalTextContent').innerHTML || '';
-          const newOriginalEntry = `<div class="mb-1 text-sm">
-            <div class="font-medium">Audio File: ${result.original_text}</div>
-            <div class="text-xs text-gray-500">[Complete File Processing]</div>
-          </div>`;
-          document.getElementById('originalTextContent').innerHTML = existingOriginal + newOriginalEntry;
-
-          // Show target language result
-          const targetLangName = getLangNameFromCode(result.target_language);
-          if (targetLangName) {
-            document.getElementById('languageGrid').style.display = 'flex';
-            document.getElementById('noTranslationsMsg').style.display = 'none';
-
-            const resultDiv = document.getElementById(`${targetLangName}-result`);
-            if (resultDiv) {
-              resultDiv.classList.remove('hidden');
-              const existingText = document.getElementById(`${targetLangName}-text`).innerHTML || '';
-              const newEntry = `<div class="mb-2 p-2 bg-white rounded border-l-4 border-yellow-400">
-                <div class="font-medium">${result.translated_text}</div>
-                <div class="text-xs text-gray-500 mt-1">[STT:${result.latency.stt_ms}ms, Trans:${result.latency.translate_ms}ms, TTS:${result.latency.tts_ms}ms, Total:${result.latency.total_ms}ms]</div>
-              </div>`;
-              document.getElementById(`${targetLangName}-text`).innerHTML = existingText + newEntry;
-            }
-          }
-
-          console.log('Complete audio file processed successfully');
+          console.log(`Started 12 parallel /translate-file API calls - results will appear as they complete`);
 
         } catch (error) {
-          console.error('Audio file processing error:', error);
+          console.error('Audio batch processing error:', error);
           document.getElementById('translationProgress').classList.add('hidden');
-          alert('Audio processing failed: ' + error.message);
+          alert('Audio batch processing failed: ' + error.message);
         }
       }
 
@@ -1632,14 +2010,25 @@
         }
       }
 
-      // TTS Audio playback functionality (from simple_test.html)
+      // TTS Audio playback functionality (exact copy from simple_test.html)
       let audioQueue = [];
       let isPlayingAudio = false;
+      let collectedAudioClips = []; // Store all received audio for download
 
-      function playTTSAudio(base64AudioData, text = 'Unknown') {
+      function queueAudio(base64AudioData, text) {
         // Add audio to queue
         audioQueue.push({ audioData: base64AudioData, text: text });
-        console.log(`Queued TTS audio (${audioQueue.length} in queue): "${text}"`);
+        console.log(`Queued audio (${audioQueue.length} in queue): "${text}"`);
+
+        // Store for download functionality
+        collectedAudioClips.push({
+          audio: base64AudioData,
+          text: text,
+          timestamp: new Date().toISOString()
+        });
+
+        // Update audio count display if element exists
+        updateAudioCount();
 
         // Start playing if not already playing
         if (!isPlayingAudio) {
@@ -1647,10 +2036,20 @@
         }
       }
 
+      function updateAudioCount() {
+        // Update audio count display (optional)
+        console.log(`Total audio clips collected: ${collectedAudioClips.length}`);
+      }
+
+      function playTTSAudio(base64AudioData, text = 'Unknown') {
+        // Use the queueAudio system like simple_test.html
+        queueAudio(base64AudioData, text);
+      }
+
       function playNextAudio() {
         if (audioQueue.length === 0) {
           isPlayingAudio = false;
-          console.log('TTS audio queue empty');
+          console.log('Audio queue empty');
           return;
         }
 
@@ -1658,7 +2057,7 @@
         isPlayingAudio = true;
 
         try {
-          // Convert base64 to blob
+          // Convert base64 to blob (exact copy from simple_test.html)
           const binaryString = atob(audioData);
           const bytes = new Uint8Array(binaryString.length);
           for (let i = 0; i < binaryString.length; i++) {
@@ -1670,33 +2069,33 @@
           const audioUrl = URL.createObjectURL(blob);
           const audio = new Audio(audioUrl);
 
-          // Set up event handlers
+          // Set up event handlers (exact copy from simple_test.html)
           audio.addEventListener('ended', () => {
             URL.revokeObjectURL(audioUrl);
-            console.log(`Finished playing TTS: "${text}"`);
+            console.log(`SUCCESS Finished playing: "${text}"`);
             // Play next audio in queue
             playNextAudio();
           });
 
           audio.addEventListener('error', (error) => {
             URL.revokeObjectURL(audioUrl);
-            console.log(`TTS audio error for "${text}": ${error.message || 'Unknown error'}`);
+            console.log(`ERROR Audio error for "${text}": ${error.message || 'Unknown error'}`);
             // Continue to next audio even on error
             playNextAudio();
           });
 
-          // Play audio
+          // Play audio (exact copy from simple_test.html)
           audio.play().then(() => {
-            console.log(`Playing TTS audio (${audioQueue.length} remaining): "${text}"`);
+            console.log(`AUDIO Playing audio (${audioQueue.length} remaining): "${text}"`);
           }).catch(error => {
-            console.log(`TTS audio playback failed for "${text}": ${error.message}`);
+            console.log(`ERROR Audio playback failed for "${text}": ${error.message}`);
             URL.revokeObjectURL(audioUrl);
             // Continue to next audio even on error
             playNextAudio();
           });
 
         } catch (error) {
-          console.log(`TTS audio processing failed for "${text}": ${error.message}`);
+          console.log(`ERROR TTS audio processing failed for "${text}": ${error.message}`);
           // Continue to next audio even on error
           playNextAudio();
         }
@@ -2101,6 +2500,7 @@
       window.addEventListener("load", () => {
         connectWebSocket();
       });
+
     </script>
   </body>
 </html>
