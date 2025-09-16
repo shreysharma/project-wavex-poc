@@ -7,9 +7,14 @@ import base64
 import json
 import logging
 import os
+import tempfile
 import time
-from threading import Lock, Timer
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock, Timer
+
+import requests
+import subprocess
+import shutil
 
 # WebSocket client for Eleven Labs TTS
 import websockets
@@ -17,7 +22,7 @@ import websockets
 # Import only what we need for STT and Translation
 from deepgram import DeepgramClient, LiveOptions, LiveTranscriptionEvents
 from dotenv import load_dotenv
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from google.cloud import translate_v2 as translate
@@ -58,10 +63,12 @@ class ElevenLabsTTSService:
             "ELEVENLABS_VOICE_ID", "yco9hkSzXpAeaJXfPNpa"  # "1tyCkDKmBd1gCvRcimhT"
         )  # Default to Rachel voice
 
-        # Use eleven_flash_v2_5 model for low latency as recommended
-        self.model_id = "eleven_flash_v2_5"
+        # Configurable model for TTS
+        self.model_id = os.getenv("ELEVENLABS_MODEL_ID", "eleven_flash_v2_5")
 
-        logger.info("Eleven Labs TTS service initialized with WebSocket API")
+        logger.info(
+            f"Eleven Labs TTS service initialized - Voice: {self.voice_id}, Model: {self.model_id}"
+        )
 
     async def text_to_speech(self, text: str) -> bytes:
         """Convert text to speech using Eleven Labs WebSocket API"""
@@ -71,7 +78,7 @@ class ElevenLabsTTSService:
 
             # Connect to Eleven Labs WebSocket
             uri = f"wss://api.elevenlabs.io/v1/text-to-speech/{self.voice_id}/stream-input?model_id={self.model_id}"
-            
+
             async with websockets.connect(uri) as websocket:
                 # Send initial connection message with voice settings (as per docs)
                 initial_message = {
@@ -81,12 +88,14 @@ class ElevenLabsTTSService:
                         "similarity_boost": 0.8,
                         "use_speaker_boost": False,
                     },
-                    "generation_config": {"chunk_length_schedule": [100, 160, 210, 300]},
+                    "generation_config": {
+                        "chunk_length_schedule": [100, 160, 210, 300]
+                    },
                     "xi_api_key": self.api_key,
                     "apply_text_normalization": "auto",  # Let ElevenLabs decide when to normalize text
                 }
                 await websocket.send(json.dumps(initial_message))
-                
+
                 # Send the actual text with flush=True for immediate generation
                 message = {
                     "text": text,
@@ -94,16 +103,18 @@ class ElevenLabsTTSService:
                     "apply_text_normalization": "auto",  # Consistent normalization
                 }
                 await websocket.send(json.dumps(message))
-                
+
                 # Send empty string to close connection
                 await websocket.send(json.dumps({"text": ""}))
-                
+
                 # Collect audio chunks
                 audio_chunks = []
-                
+
                 while True:
                     try:
-                        response = await asyncio.wait_for(websocket.recv(), timeout=30.0)
+                        response = await asyncio.wait_for(
+                            websocket.recv(), timeout=30.0
+                        )
                         data = json.loads(response)
 
                         if data.get("audio"):
@@ -115,10 +126,10 @@ class ElevenLabsTTSService:
                             break
 
                     except asyncio.TimeoutError:
-                        logger.error("⏰ Timeout waiting for audio response")
+                        logger.error(" Timeout waiting for audio response")
                         break
                     except json.JSONDecodeError as e:
-                        logger.error(f"❌ JSON decode error: {e}")
+                        logger.error(f" JSON decode error: {e}")
                         break
                     except websockets.exceptions.ConnectionClosed:
                         logger.debug("TTS WebSocket connection closed")
@@ -128,11 +139,11 @@ class ElevenLabsTTSService:
                 if audio_chunks:
                     combined_audio = b"".join(audio_chunks)
                     logger.info(
-                        f"✅ Generated {len(combined_audio)} bytes of TTS audio via WebSocket API for text: '{text}'"
+                        f" Generated {len(combined_audio)} bytes of TTS audio via WebSocket API for text: '{text}'"
                     )
                     return combined_audio
                 else:
-                    logger.warning(f"❌ No audio chunks received for text: '{text}'")
+                    logger.warning(f" No audio chunks received for text: '{text}'")
                     return b""
 
         except Exception as e:
@@ -225,11 +236,14 @@ class SimpleSTTService:
             def on_message(_deepgram_self, result, **_kwargs):
                 try:
                     sentence = result.channel.alternatives[0].transcript
-                    if len(sentence) > 0:
+                    is_final = getattr(result, "is_final", True)
+
+                    # Only process final results to avoid duplicates from interim results
+                    if len(sentence) > 0 and is_final:
                         import time as time_module  # Import time module locally
 
                         stt_start_time = time_module.time()
-                        logger.info(f"Transcript: {sentence}")
+                        logger.info(f"Final transcript: {sentence}")
 
                         # Translate using dynamic languages with timing
                         translate_start_time = time_module.time()
@@ -269,7 +283,7 @@ class SimpleSTTService:
                         }
                         stt_service_ref.transcript_queue.append(transcript_data)
                         logger.info(
-                            f"✅ Queued transcript (STT: {stt_latency:.1f}ms, Translate: {translate_latency:.1f}ms): {sentence} → {translated_text}"
+                            f" Queued transcript (STT: {stt_latency:.1f}ms, Translate: {translate_latency:.1f}ms): {sentence} → {translated_text}"
                         )
 
                 except Exception as e:
@@ -290,14 +304,15 @@ class SimpleSTTService:
             self.connection.on(LiveTranscriptionEvents.Error, on_error)
             self.connection.on(LiveTranscriptionEvents.Close, on_close)
 
-            # Configure Deepgram options for live transcription with dynamic language
+            # Configure Deepgram options for better sentence detection
             options = LiveOptions(
                 model="nova-2",
                 language=input_language,  # Use dynamic input language
-                # smart_format=True,
                 encoding="linear16",
                 sample_rate=16000,
                 channels=1,
+                interim_results=True,  # Required for utterance_end_ms
+                utterance_end_ms="1000",  # 1 second silence for sentence boundary
             )
 
             # Start the connection
@@ -327,9 +342,9 @@ class SimpleSTTService:
             if self.connection and time.time() - self.last_audio_time > 3.0:
                 try:
                     # Send small keepalive packet (empty audio frame)
-                    keepalive_data = b'\x00' * 320  # 20ms of silence at 16kHz
+                    keepalive_data = b"\x00" * 320  # 20ms of silence at 16kHz
                     self.connection.send(keepalive_data)
-                    logger.debug("📡 Sent keepalive to Deepgram")
+                    logger.debug(" Sent keepalive to Deepgram")
                     # Schedule next keepalive
                     self._reset_keepalive_timer()
                 except Exception as e:
@@ -395,6 +410,417 @@ async def serve_test_page():
     return FileResponse("simple_test.html")
 
 
+@app.post("/translate-file")
+async def translate_complete_file(
+    file: UploadFile = File(...),
+    input_language: str = Form("hi"),
+    output_language: str = Form("en"),
+):
+    """Translate a complete audio file using REST API"""
+    try:
+        import time as time_module
+
+        # Read the uploaded file
+        audio_file = await file.read()
+        logger.info(f"Processing complete file: {len(audio_file)} bytes")
+        logger.info(f"Languages: {input_language} → {output_language}")
+
+        start_time = time_module.time()
+
+        # Save audio to temporary file
+        with tempfile.NamedTemporaryFile(suffix=".raw", delete=False) as temp_file:
+            temp_file.write(audio_file)
+            temp_file_path = temp_file.name
+
+        # Use Deepgram REST API for complete file processing
+        deepgram_key = os.getenv("DEEPGRAM_API_KEY")
+        headers = {
+            "Authorization": f"Token {deepgram_key}",
+            "Content-Type": "audio/raw",
+        }
+
+        params = {
+            "model": "nova-2",
+            "language": input_language,
+            "encoding": "linear16",
+            "sample_rate": "16000",
+            "channels": "1",
+            "smart_format": "true",
+        }
+
+        stt_start = time_module.time()
+        with open(temp_file_path, "rb") as audio_file_handle:
+            response = requests.post(
+                "https://api.deepgram.com/v1/listen",
+                headers=headers,
+                params=params,
+                data=audio_file_handle,
+                timeout=120,  # 2 minute timeout for large files
+            )
+
+        if response.status_code != 200:
+            raise Exception(
+                f"Deepgram API error: {response.status_code} - {response.text}"
+            )
+
+        result = response.json()
+        stt_end = time_module.time()
+
+        # Extract transcript
+        transcript = ""
+        if "results" in result and "channels" in result["results"]:
+            for alternative in result["results"]["channels"][0]["alternatives"]:
+                transcript = alternative.get("transcript", "")
+                break
+
+        if not transcript:
+            raise Exception("No transcript found in Deepgram response")
+
+        logger.info(f"Complete file transcript: {transcript}")
+
+        # Translate the complete transcript
+        translate_start = time_module.time()
+        translated_text = translate_service.translate_text(
+            text=transcript,
+            target_language=output_language,
+            source_language=input_language,
+        )
+        translate_end = time_module.time()
+
+        # Generate TTS if service is available
+        tts_start = time_module.time()
+        audio_data = None
+        if tts_service and translated_text:
+            try:
+                audio_bytes = await tts_service.text_to_speech(translated_text)
+                if audio_bytes:
+                    audio_data = base64.b64encode(audio_bytes).decode("utf-8")
+                    logger.info(f" Generated TTS audio: {len(audio_bytes)} bytes")
+            except Exception as tts_error:
+                logger.error(f"TTS generation failed: {tts_error}")
+
+        tts_end = time_module.time()
+
+        # Calculate latencies
+        total_time = time_module.time() - start_time
+        stt_latency = (stt_end - stt_start) * 1000
+        translate_latency = (translate_end - translate_start) * 1000
+        tts_latency = (tts_end - tts_start) * 1000
+
+        # Cleanup temp file
+        try:
+            os.unlink(temp_file_path)
+        except OSError:
+            pass
+
+        response_data = {
+            "success": True,
+            "original_text": transcript,
+            "translated_text": translated_text,
+            "audio_data": audio_data,
+            "source_language": input_language,
+            "target_language": output_language,
+            "latency": {
+                "stt_ms": round(stt_latency, 2),
+                "translate_ms": round(translate_latency, 2),
+                "tts_ms": round(tts_latency, 2),
+                "total_ms": round(total_time * 1000, 2),
+            },
+        }
+
+        logger.info(f" Complete file processed successfully in {total_time:.2f}s")
+        return response_data
+
+    except Exception as e:
+        logger.error(f" Error processing complete file: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/translate-video")
+async def translate_complete_video(
+    file: UploadFile = File(...),
+    input_language: str = Form("hi"),
+    output_language: str = Form("en")
+):
+    """Translate a complete video file and return with replaced audio track"""
+    try:
+        import time as time_module
+
+        # Read the uploaded video file
+        video_data = await file.read()
+        logger.info(f"Processing complete video: {len(video_data)} bytes")
+        logger.info(f"Languages: {input_language} → {output_language}")
+
+        start_time = time_module.time()
+
+        # Save video to temporary file
+        video_ext = file.filename.split('.')[-1] if '.' in file.filename else 'mp4'
+        with tempfile.NamedTemporaryFile(suffix=f'.{video_ext}', delete=False) as temp_video:
+            temp_video.write(video_data)
+            temp_video_path = temp_video.name
+
+        # Extract audio from video using ffmpeg
+        audio_path = temp_video_path.replace(f'.{video_ext}', '.wav')
+        try:
+            subprocess.run([
+                'ffmpeg', '-i', temp_video_path,
+                '-vn',  # No video
+                '-acodec', 'pcm_s16le',  # 16-bit PCM
+                '-ar', '16000',  # 16kHz sample rate
+                '-ac', '1',  # Mono
+                audio_path
+            ], check=True, capture_output=True)
+
+            logger.info(f"Audio extracted to: {audio_path}")
+
+        except subprocess.CalledProcessError as e:
+            raise Exception(f"Audio extraction failed: {e}")
+
+        # Process extracted audio with Deepgram
+        deepgram_key = os.getenv("DEEPGRAM_API_KEY")
+        headers = {
+            "Authorization": f"Token {deepgram_key}",
+            "Content-Type": "audio/wav",
+        }
+
+        params = {
+            "model": "nova-2",
+            "language": input_language,
+            "encoding": "linear16",
+            "sample_rate": "16000",
+            "channels": "1",
+            "smart_format": "true",
+        }
+
+        stt_start = time_module.time()
+        with open(audio_path, "rb") as audio_file:
+            response = requests.post(
+                "https://api.deepgram.com/v1/listen",
+                headers=headers,
+                params=params,
+                data=audio_file,
+                timeout=300  # 5 minute timeout for large video files
+            )
+
+        if response.status_code != 200:
+            raise Exception(f"Deepgram API error: {response.status_code} - {response.text}")
+
+        result = response.json()
+        stt_end = time_module.time()
+
+        # Extract transcript
+        transcript = ""
+        if "results" in result and "channels" in result["results"]:
+            for alternative in result["results"]["channels"][0]["alternatives"]:
+                transcript = alternative.get("transcript", "")
+                break
+
+        if not transcript:
+            raise Exception("No transcript found in Deepgram response")
+
+        logger.info(f"Complete video transcript: {transcript}")
+
+        # Translate the complete transcript
+        translate_start = time_module.time()
+        translated_text = translate_service.translate_text(
+            text=transcript,
+            target_language=output_language,
+            source_language=input_language,
+        )
+        translate_end = time_module.time()
+
+        # Generate TTS for the complete translation
+        tts_start = time_module.time()
+        translated_audio_path = None
+        if tts_service and translated_text:
+            try:
+                audio_bytes = await tts_service.text_to_speech(translated_text)
+                if audio_bytes:
+                    # Save TTS audio to temporary file
+                    translated_audio_path = temp_video_path.replace(f'.{video_ext}', '_translated.mp3')
+                    with open(translated_audio_path, 'wb') as f:
+                        f.write(audio_bytes)
+                    logger.info(f"Generated TTS audio: {len(audio_bytes)} bytes")
+            except Exception as tts_error:
+                logger.error(f"TTS generation failed: {tts_error}")
+
+        tts_end = time_module.time()
+
+        # Replace audio track in video if TTS was successful
+        output_video_path = None
+        if translated_audio_path:
+            output_video_path = temp_video_path.replace(f'.{video_ext}', '_final.mp4')
+            try:
+                subprocess.run([
+                    'ffmpeg', '-i', temp_video_path,  # Input video
+                    '-i', translated_audio_path,     # Input translated audio
+                    '-c:v', 'copy',                  # Copy video without re-encoding
+                    '-c:a', 'aac',                   # Encode audio as AAC
+                    '-map', '0:v:0',                 # Map video from first input
+                    '-map', '1:a:0',                 # Map audio from second input
+                    '-shortest',                     # Match shortest stream duration
+                    output_video_path
+                ], check=True, capture_output=True)
+
+                logger.info(f"Video with translated audio created: {output_video_path}")
+
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Video processing failed: {e}")
+                output_video_path = None
+
+        # Calculate latencies
+        total_time = time_module.time() - start_time
+        stt_latency = (stt_end - stt_start) * 1000
+        translate_latency = (translate_end - translate_start) * 1000
+        tts_latency = (tts_end - tts_start) * 1000
+
+        # Read the final video file for response
+        output_video_data = None
+        if output_video_path and os.path.exists(output_video_path):
+            with open(output_video_path, 'rb') as f:
+                output_video_data = base64.b64encode(f.read()).decode('utf-8')
+
+        # Cleanup temp files
+        try:
+            os.unlink(temp_video_path)
+            if audio_path and os.path.exists(audio_path):
+                os.unlink(audio_path)
+            if translated_audio_path and os.path.exists(translated_audio_path):
+                os.unlink(translated_audio_path)
+            if output_video_path and os.path.exists(output_video_path):
+                os.unlink(output_video_path)
+        except OSError:
+            pass
+
+        response_data = {
+            "success": True,
+            "original_text": transcript,
+            "translated_text": translated_text,
+            "video_data": output_video_data,
+            "source_language": input_language,
+            "target_language": output_language,
+            "latency": {
+                "stt_ms": round(stt_latency, 2),
+                "translate_ms": round(translate_latency, 2),
+                "tts_ms": round(tts_latency, 2),
+                "total_ms": round(total_time * 1000, 2),
+            }
+        }
+
+        logger.info(f"Complete video processed successfully in {total_time:.2f}s")
+        return response_data
+
+    except Exception as e:
+        logger.error(f"Error processing complete video: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@app.post("/translate-text")
+async def translate_text_to_all_languages(
+    text: str = Form(...),
+    source_language: str = Form("auto")
+):
+    """Translate text to all supported languages in parallel"""
+    try:
+        import time as time_module
+        from concurrent.futures import as_completed
+
+        if not text or not text.strip():
+            return {"success": False, "error": "No text provided"}
+
+        text = text.strip()
+        logger.info(f"Translating text to all languages: {text[:50]}...")
+
+        start_time = time_module.time()
+
+        # All supported languages (from UI dropdown)
+        target_languages = {
+            "en": "English",
+            "hi": "Hindi (हिंदी)",
+            "ta": "Tamil (தமிழ்)",
+            "te": "Telugu (తెలుగు)",
+            "bn": "Bengali (বাংলা)",
+            "mr": "Marathi (मराठी)",
+            "gu": "Gujarati (ગુજરાતી)",
+            "kn": "Kannada (ಕನ್ನಡ)",
+            "ml": "Malayalam (മലയാളം)",
+            "pa": "Punjabi (ਪੰਜਾਬੀ)",
+            "ur": "Urdu (اردو)",
+            "or": "Odia (ଓଡ଼ିଆ)",
+            "as": "Assamese (অসমীয়া)"
+        }
+
+        # Remove source language from targets if it exists
+        if source_language in target_languages:
+            target_languages.pop(source_language)
+
+        # Function to translate to a single language
+        def translate_to_language(target_lang):
+            try:
+                start = time_module.time()
+                translated = translate_service.translate_text(
+                    text=text,
+                    target_language=target_lang,
+                    source_language=source_language
+                )
+                end = time_module.time()
+                return {
+                    "language": target_lang,
+                    "language_name": target_languages[target_lang],
+                    "translated_text": translated,
+                    "latency_ms": round((end - start) * 1000, 2)
+                }
+            except Exception as e:
+                logger.error(f"Translation failed for {target_lang}: {e}")
+                return {
+                    "language": target_lang,
+                    "language_name": target_languages[target_lang],
+                    "translated_text": f"[Translation failed: {str(e)}]",
+                    "latency_ms": 0
+                }
+
+        # Execute translations in parallel
+        with executor as pool:
+            futures = {pool.submit(translate_to_language, lang): lang for lang in target_languages.keys()}
+
+            translations = []
+            for future in as_completed(futures):
+                result = future.result()
+                translations.append(result)
+                logger.info(f"Completed {result['language']}: {result['translated_text'][:30]}...")
+
+        # Sort by language code for consistent output
+        translations.sort(key=lambda x: x['language'])
+
+        total_time = time_module.time() - start_time
+        avg_latency = sum(t['latency_ms'] for t in translations) / len(translations) if translations else 0
+
+        response_data = {
+            "success": True,
+            "original_text": text,
+            "source_language": source_language,
+            "translations": translations,
+            "summary": {
+                "total_languages": len(translations),
+                "total_time_ms": round(total_time * 1000, 2),
+                "average_latency_ms": round(avg_latency, 2)
+            }
+        }
+
+        logger.info(f"Parallel translation completed: {len(translations)} languages in {total_time:.2f}s")
+        return response_data
+
+    except Exception as e:
+        logger.error(f"Error in parallel text translation: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
 @app.websocket("/stt-test")
 async def stt_websocket(websocket: WebSocket):
     """Continuous streaming STT WebSocket endpoint - same as original"""
@@ -433,17 +859,19 @@ async def stt_websocket(websocket: WebSocket):
                                     audio_bytes
                                 ).decode("utf-8")
                                 logger.info(
-                                    f"🔊 TTS completed: {len(audio_bytes)} bytes for '{transcript_data['translated_text']}'"
+                                    f" TTS completed: {len(audio_bytes)} bytes for '{transcript_data['translated_text']}'"
                                 )
                             else:
                                 transcript_data["audio_data"] = None
-                                logger.warning(f"❌ TTS failed for: '{transcript_data['translated_text']}'")
+                                logger.warning(
+                                    f" TTS failed for: '{transcript_data['translated_text']}'"
+                                )
 
                             # Send transcript with audio
                             await websocket.send_json(transcript_data)
                             latency_info = transcript_data.get("latency", {})
                             logger.info(
-                                f"📤 Sent with TTS (STT: {latency_info.get('stt_ms', 0):.1f}ms, Trans: {latency_info.get('translate_ms', 0):.1f}ms, TTS: {latency_info.get('tts_ms', 0):.1f}ms, Total: {latency_info.get('total_ms', 0):.1f}ms)"
+                                f" Sent with TTS (STT: {latency_info.get('stt_ms', 0):.1f}ms, Trans: {latency_info.get('translate_ms', 0):.1f}ms, TTS: {latency_info.get('tts_ms', 0):.1f}ms, Total: {latency_info.get('total_ms', 0):.1f}ms)"
                             )
                         except Exception as e:
                             logger.error(f"Error processing completed TTS task: {e}")
@@ -467,7 +895,9 @@ async def stt_websocket(websocket: WebSocket):
                     )
 
                     await websocket.send_json(transcript_without_tts)
-                    logger.info(f"⚡ Fast transcript sent: {transcript_data.get('original_text', 'unknown')}")
+                    logger.info(
+                        f" Fast transcript sent: {transcript_data.get('original_text', 'unknown')}"
+                    )
 
                     # Start TTS generation asynchronously if needed
                     if (
@@ -481,7 +911,9 @@ async def stt_websocket(websocket: WebSocket):
                             _generate_tts_async(transcript_data, tts_service)
                         )
                         pending_tts_tasks[task_id] = task
-                        logger.info(f"🎵 Started async TTS for: '{transcript_data['translated_text']}'")
+                        logger.info(
+                            f" Started async TTS for: '{transcript_data['translated_text']}'"
+                        )
 
                 # Receive message with a small timeout so we can check transcripts regularly
                 try:
@@ -494,7 +926,16 @@ async def stt_websocket(websocket: WebSocket):
                     # Binary audio data - send to Deepgram only if streaming has started
                     if streaming_started:
                         audio_data = message["bytes"]
-                        logger.debug(f"Received {len(audio_data)} bytes of audio")
+                        audio_size_mb = len(audio_data) / (1024 * 1024)
+
+                        if audio_size_mb > 1.0:  # Large file (>1MB)
+                            logger.info(
+                                f" Received large audio file: {len(audio_data)} bytes ({audio_size_mb:.2f} MB)"
+                            )
+                            logger.info(" Processing entire file at once...")
+                        else:
+                            logger.debug(f"Received {len(audio_data)} bytes of audio")
+
                         stt_service.send_audio(audio_data)
                     else:
                         logger.debug("Audio received but streaming not started yet")
@@ -575,7 +1016,8 @@ async def _generate_tts_async(transcript_data, tts_service):
 
 
 if __name__ == "__main__":
-    logger.info("🚀 Starting Optimized Voice Translation Backend with Async TTS")
-    logger.info("🎵 Using Eleven Labs WebSocket TTS with improved pipeline")
+    logger.info(" Starting Optimized Voice Translation Backend with Async TTS")
+    logger.info(" Using Eleven Labs WebSocket TTS with improved pipeline")
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
