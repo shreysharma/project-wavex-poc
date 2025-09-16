@@ -739,6 +739,15 @@
           console.log("WebSocket connected");
           isConnected = true;
 
+          // Send initial language settings immediately on connection
+          const selectedLang = document.getElementById("selectedLang").value;
+          websocket.send(JSON.stringify({
+            type: 'language_settings',
+            input_language: 'hi',
+            output_language: selectedLang
+          }));
+          console.log(`Sent initial language settings on connection: hi → ${selectedLang}`);
+
           // Update bottom status (if it exists)
           const bottomStatus = document.getElementById("connectionStatus");
           if (bottomStatus) {
@@ -775,7 +784,9 @@
 
             case "transcript":
               console.log("TRANSCRIPT RECEIVED:", data);
-              if (data.original_text && data.translated_text) {
+              if (data.original_text) {
+                // Handle case where translated_text might be empty (same language translation)
+                const translatedText = data.translated_text || data.original_text;
                 // Check for duplicates using timestamp
                 const timestamp = data.timestamp;
                 if (timestamp && processedTimestamps.has(timestamp)) {
@@ -823,13 +834,21 @@
                       if (resultDiv) {
                         resultDiv.classList.remove("hidden");
                         const existingText = document.getElementById(`${targetLangName}-text`).innerHTML || "";
-                        const newEntry = `<div class="font-medium">${data.translated_text}</div>
+                        const newEntry = `<div class="font-medium">${translatedText}</div>
                           <div class="text-xs text-gray-500 mt-1">
                             ${data.latency ? `[STT:${data.latency.stt_ms}ms, Trans:${data.latency.translate_ms}ms, TTS:${data.latency.tts_ms}ms, Total:${data.latency.total_ms}ms]` : "No latency data"}
                           </div>`;
                         document.getElementById(`${targetLangName}-text`).innerHTML = existingText + newEntry;
                       }
                     }
+                  }
+
+                  // Play TTS audio if available
+                  if (data.audio_data) {
+                    playTTSAudio(data.audio_data, translatedText);
+                    console.log('Playing TTS audio for:', translatedText);
+                  } else {
+                    console.log('No TTS audio_data in transcript:', translatedText);
                   }
 
                   // Always show original text
@@ -1075,7 +1094,7 @@
       let isVideoStreaming = false;
       let videoAudioContext = null;
       let selectedVideoFile = null;
-      let videoWebSocket = null;
+      let videoWebSockets = []; // Array to store 12 WebSocket connections
 
       // Audio file processing variables
       let isAudioStreaming = false;
@@ -1251,7 +1270,7 @@
 
       }
 
-      // Audio file processing functions
+      // Audio file processing functions (fixed to match simple_test.html)
       async function startAudioStreaming() {
         try {
           if (!selectedAudioFile) {
@@ -1262,35 +1281,27 @@
           // Get selected language for translation
           const outputLang = document.getElementById("selectedLang").value;
 
-          console.log(
-            `Starting audio file processing: ${selectedAudioFile.name} (${selectedAudioFile.size} bytes)`
-          );
-          console.log(`Languages: auto → ${outputLang}`);
+          console.log(`Starting audio file streaming: ${selectedAudioFile.name} (${selectedAudioFile.size} bytes)`);
+          console.log(`Languages: hi → ${outputLang}`);
 
-          // Send language settings to backend
+          // Send language settings to backend (use specific language like simple_test.html)
           if (websocket && websocket.readyState === WebSocket.OPEN) {
-            websocket.send(
-              JSON.stringify({
-                type: "language_settings",
-                input_language: "auto",
-                output_language: outputLang,
-              })
-            );
-            console.log(`Sent language settings: auto → ${outputLang}`);
+            websocket.send(JSON.stringify({
+              type: 'language_settings',
+              input_language: 'hi',
+              output_language: 'en'  // Always use English for consistent translation
+            }));
+            console.log(`Sent language settings: hi → en`);
           }
 
-          // Create audio context and decode the file
+          // Create audio context and decode the file (exactly like simple_test.html)
           const audioContext = new AudioContext({ sampleRate: 16000 });
           const arrayBuffer = await selectedAudioFile.arrayBuffer();
           const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-          console.log(
-            `Audio file decoded: ${audioBuffer.duration.toFixed(2)}s, ${
-              audioBuffer.numberOfChannels
-            } channels`
-          );
+          console.log(`Audio file decoded: ${audioBuffer.duration.toFixed(2)}s, ${audioBuffer.numberOfChannels} channels`);
 
-          // Convert to 16-bit PCM mono at 16kHz
+          // Convert to 16-bit PCM mono at 16kHz (exactly like simple_test.html)
           const channelData = audioBuffer.getChannelData(0); // Get first channel
           const chunkSize = 2048; // Same as microphone
           const chunkDuration = chunkSize / 16000; // Duration per chunk in seconds
@@ -1298,30 +1309,30 @@
 
           isAudioStreaming = true;
 
-          // Stream audio chunks at real-time speed
+          // Update status
+          const headerStatus = document.getElementById("headerConnectionStatus");
+          if (headerStatus) {
+            headerStatus.textContent = "Audio Streaming: Connected";
+            headerStatus.className = "bg-orange-100 w-fit px-3 py-1 rounded text-sm text-orange-700";
+          }
+
+          // Stream audio chunks at real-time speed (exactly like simple_test.html)
           const fileStreamInterval = setInterval(() => {
-            if (
-              !isAudioStreaming ||
-              !websocket ||
-              websocket.readyState !== WebSocket.OPEN
-            ) {
+            if (!isAudioStreaming || !websocket || websocket.readyState !== WebSocket.OPEN) {
               clearInterval(fileStreamInterval);
               stopAudioStreaming();
               return;
             }
 
             if (currentIndex >= channelData.length) {
-              console.log("Audio file streaming completed");
+              console.log('Audio file streaming completed');
               clearInterval(fileStreamInterval);
               stopAudioStreaming();
               return;
             }
 
             // Extract chunk
-            const chunkEnd = Math.min(
-              currentIndex + chunkSize,
-              channelData.length
-            );
+            const chunkEnd = Math.min(currentIndex + chunkSize, channelData.length);
             const chunk = channelData.slice(currentIndex, chunkEnd);
 
             // Convert to 16-bit PCM
@@ -1334,12 +1345,29 @@
             // Send to backend (same as microphone)
             websocket.send(pcmBuffer.buffer);
 
+            // Log progress occasionally
+            const progress = (currentIndex / channelData.length * 100).toFixed(1);
+            if (currentIndex % (chunkSize * 10) === 0) { // Log every ~10 chunks
+              console.log(`Audio streaming progress: ${progress}%`);
+            }
+
             currentIndex += chunkSize;
           }, chunkDuration * 1000); // Send chunks at real-time intervals
 
-          console.log(
-            "Audio file streaming started - processing audio in real-time"
-          );
+          // Store interval for cleanup
+          this.fileStreamInterval = fileStreamInterval;
+
+          console.log('Audio file streaming started - processing audio in real-time');
+
+          // Start playing the audio file so user can hear it
+          const audioPlayer = document.getElementById('audioPlayer');
+          try {
+            await audioPlayer.play();
+            console.log('Audio playback started');
+          } catch (playError) {
+            console.log('Audio autoplay failed, user interaction required:', playError);
+          }
+
         } catch (error) {
           console.error(`Error starting audio streaming: ${error.message}`);
           stopAudioStreaming();
@@ -1604,6 +1632,76 @@
         }
       }
 
+      // TTS Audio playback functionality (from simple_test.html)
+      let audioQueue = [];
+      let isPlayingAudio = false;
+
+      function playTTSAudio(base64AudioData, text = 'Unknown') {
+        // Add audio to queue
+        audioQueue.push({ audioData: base64AudioData, text: text });
+        console.log(`Queued TTS audio (${audioQueue.length} in queue): "${text}"`);
+
+        // Start playing if not already playing
+        if (!isPlayingAudio) {
+          playNextAudio();
+        }
+      }
+
+      function playNextAudio() {
+        if (audioQueue.length === 0) {
+          isPlayingAudio = false;
+          console.log('TTS audio queue empty');
+          return;
+        }
+
+        const { audioData, text } = audioQueue.shift();
+        isPlayingAudio = true;
+
+        try {
+          // Convert base64 to blob
+          const binaryString = atob(audioData);
+          const bytes = new Uint8Array(binaryString.length);
+          for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+
+          // Create blob and audio element
+          const blob = new Blob([bytes], { type: 'audio/mpeg' });
+          const audioUrl = URL.createObjectURL(blob);
+          const audio = new Audio(audioUrl);
+
+          // Set up event handlers
+          audio.addEventListener('ended', () => {
+            URL.revokeObjectURL(audioUrl);
+            console.log(`Finished playing TTS: "${text}"`);
+            // Play next audio in queue
+            playNextAudio();
+          });
+
+          audio.addEventListener('error', (error) => {
+            URL.revokeObjectURL(audioUrl);
+            console.log(`TTS audio error for "${text}": ${error.message || 'Unknown error'}`);
+            // Continue to next audio even on error
+            playNextAudio();
+          });
+
+          // Play audio
+          audio.play().then(() => {
+            console.log(`Playing TTS audio (${audioQueue.length} remaining): "${text}"`);
+          }).catch(error => {
+            console.log(`TTS audio playback failed for "${text}": ${error.message}`);
+            URL.revokeObjectURL(audioUrl);
+            // Continue to next audio even on error
+            playNextAudio();
+          });
+
+        } catch (error) {
+          console.log(`TTS audio processing failed for "${text}": ${error.message}`);
+          // Continue to next audio even on error
+          playNextAudio();
+        }
+      }
+
       // Helper function to map language codes to div names
       function getLangNameFromCode(langCode) {
         const mapping = {
@@ -1614,7 +1712,7 @@
         return mapping[langCode] || null;
       }
 
-      // Video processing functions - Same STT but 12 parallel API requests
+      // Video processing functions - 12 separate WebSocket connections
       async function startVideoStreaming() {
         try {
           if (!selectedVideoFile) {
@@ -1622,26 +1720,130 @@
             return;
           }
 
-          console.log(`Starting video processing with 12 parallel API translations: ${selectedVideoFile.name}`);
+          console.log(`Starting video processing with 12 separate WebSocket connections: ${selectedVideoFile.name}`);
 
           // Update status to indicate video mode
           const headerStatus = document.getElementById("headerConnectionStatus");
           if (headerStatus) {
-            headerStatus.textContent = "Video Mode: Connected - 12 Languages";
+            headerStatus.textContent = "Video Mode: Connecting 12 Languages";
             headerStatus.className = "bg-purple-100 w-fit px-3 py-1 rounded text-sm text-purple-700";
           }
 
-          // Send language settings to regular STT WebSocket (match simple_test.html exactly)
+          // Close existing main WebSocket if open
           if (websocket && websocket.readyState === WebSocket.OPEN) {
-            websocket.send(JSON.stringify({
-              type: 'language_settings',
-              input_language: "hi",  // Use specific language like simple_test.html
-              output_language: "en"
-            }));
-            console.log("Sent language settings to STT WebSocket for video mode: hi → en");
+            websocket.close();
+            console.log("Closed main WebSocket connection for video mode");
           }
 
-          // Set video mode flag for WebSocket message handling
+          // Define 12 target languages
+          const targetLanguages = [
+            { code: "hi", name: "Hindi" },
+            { code: "en", name: "English" },
+            { code: "ta", name: "Tamil" },
+            { code: "te", name: "Telugu" },
+            { code: "bn", name: "Bengali" },
+            { code: "mr", name: "Marathi" },
+            { code: "gu", name: "Gujarati" },
+            { code: "kn", name: "Kannada" },
+            { code: "ml", name: "Malayalam" },
+            { code: "pa", name: "Punjabi" },
+            { code: "ur", name: "Urdu" },
+            { code: "or", name: "Odia" }
+          ];
+
+          // Create 12 separate WebSocket connections
+          videoWebSockets = [];
+          let connectedCount = 0;
+
+          for (const lang of targetLanguages) {
+            try {
+              const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+              const wsUrl = `${protocol}//${window.location.host}/stt-test`;
+              const ws = new WebSocket(wsUrl);
+
+              ws.onopen = function() {
+                console.log(`WebSocket ${lang.code} connected`);
+
+                // Send language settings immediately
+                ws.send(JSON.stringify({
+                  type: 'language_settings',
+                  input_language: 'hi',
+                  output_language: lang.code
+                }));
+                console.log(`Sent language settings for ${lang.name}: hi → ${lang.code}`);
+
+                connectedCount++;
+                if (connectedCount === targetLanguages.length) {
+                  console.log("All 12 WebSocket connections established");
+
+                  // Update status
+                  const headerStatus = document.getElementById("headerConnectionStatus");
+                  if (headerStatus) {
+                    headerStatus.textContent = "Video Mode: 12 Languages Connected";
+                    headerStatus.className = "bg-green-100 w-fit px-3 py-1 rounded text-sm text-green-700";
+                  }
+                }
+              };
+
+              ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                console.log(`${lang.code} received:`, data.type, data);
+
+                if (data.type === 'transcript' && data.original_text && data.translated_text) {
+                  // Show result for this specific language
+                  const langName = getLangNameFromCode(lang.code);
+                  if (langName) {
+                    document.getElementById('languageGrid').style.display = 'flex';
+                    document.getElementById('noTranslationsMsg').style.display = 'none';
+
+                    const resultDiv = document.getElementById(`${langName}-result`);
+                    if (resultDiv) {
+                      resultDiv.classList.remove('hidden');
+                      const existingText = document.getElementById(`${langName}-text`).innerHTML || '';
+                      const newEntry = `<div class="mb-2 p-2 bg-white rounded border-l-4 border-purple-400">
+                        <div class="font-medium">${data.translated_text}</div>
+                        <div class="text-xs text-gray-500 mt-1">[STT:${data.latency?.stt_ms || 0}ms, Trans:${data.latency?.translate_ms || 0}ms, TTS:${data.latency?.tts_ms || 0}ms, Total:${data.latency?.total_ms || 0}ms]</div>
+                      </div>`;
+                      document.getElementById(`${langName}-text`).innerHTML = existingText + newEntry;
+                    }
+                  }
+
+                  // Show original text (only once)
+                  if (lang.code === 'en') { // Use English connection for original text display
+                    document.getElementById('originalTextDisplay').classList.remove('hidden');
+                    const existingOriginal = document.getElementById('originalTextContent').innerHTML || '';
+                    const newOriginalEntry = `<div class="mb-1 text-sm">
+                      <div class="font-medium">Video: ${data.original_text}</div>
+                      <div class="text-xs text-gray-500">[Multi-Language Processing]</div>
+                    </div>`;
+                    document.getElementById('originalTextContent').innerHTML = existingOriginal + newOriginalEntry;
+                  }
+
+                  // Play TTS audio if available
+                  if (data.audio_data) {
+                    playTTSAudio(data.audio_data, data.translated_text);
+                    console.log(`Playing TTS audio for ${lang.name}:`, data.translated_text);
+                  }
+                }
+              };
+
+              ws.onclose = function() {
+                console.log(`WebSocket ${lang.code} disconnected`);
+              };
+
+              ws.onerror = function(error) {
+                console.log(`WebSocket ${lang.code} error:`, error);
+              };
+
+              // Store the WebSocket with language info
+              videoWebSockets.push({ ws, lang });
+
+            } catch (error) {
+              console.error(`Failed to create WebSocket for ${lang.code}:`, error);
+            }
+          }
+
+          // Set video mode flag
           isVideoStreaming = true;
 
           // Load video file and wait for metadata
@@ -1680,11 +1882,7 @@
           const processor = audioContext.createScriptProcessor(2048, 1, 1);
 
           processor.onaudioprocess = function (event) {
-            if (
-              !isVideoStreaming ||
-              !websocket ||
-              websocket.readyState !== WebSocket.OPEN
-            ) {
+            if (!isVideoStreaming || videoWebSockets.length === 0) {
               return;
             }
 
@@ -1700,12 +1898,18 @@
             // Check if we're getting actual audio data (not silence)
             const audioLevel = Math.max(...inputBuffer.map(Math.abs));
 
-            // Send to regular STT WebSocket (same as microphone)
-            websocket.send(pcmBuffer.buffer);
+            // Send same audio data to all 12 WebSocket connections
+            let sentCount = 0;
+            videoWebSockets.forEach(({ws, lang}) => {
+              if (ws.readyState === WebSocket.OPEN) {
+                ws.send(pcmBuffer.buffer);
+                sentCount++;
+              }
+            });
 
             // Log occasionally to verify audio is being sent
             if (Math.random() < 0.01) {
-              console.log(`Sending video audio to STT: ${pcmBuffer.buffer.byteLength} bytes, Audio level: ${audioLevel.toFixed(4)}`);
+              console.log(`Sending video audio to ${sentCount} WebSockets: ${pcmBuffer.buffer.byteLength} bytes, Audio level: ${audioLevel.toFixed(4)}`);
             }
           };
 
@@ -1806,19 +2010,25 @@
 
 
       // Custom audio player controls
-      document.getElementById("audioPlayBtn").addEventListener("click", () => {
+      document.getElementById("audioPlayBtn").addEventListener("click", async () => {
         const audioPlayer = document.getElementById('audioPlayer');
         const audioPlayIcon = document.getElementById('audioPlayIcon');
         const audioPauseIcon = document.getElementById('audioPauseIcon');
 
         if (audioPlayer.paused) {
-          audioPlayer.play();
-          audioPlayIcon.classList.add('hidden');
-          audioPauseIcon.classList.remove('hidden');
+          try {
+            await audioPlayer.play();
+            audioPlayIcon.classList.add('hidden');
+            audioPauseIcon.classList.remove('hidden');
+            console.log('Audio player started');
+          } catch (error) {
+            console.log('Audio play failed:', error);
+          }
         } else {
           audioPlayer.pause();
           audioPlayIcon.classList.remove('hidden');
           audioPauseIcon.classList.add('hidden');
+          console.log('Audio player paused');
         }
       });
 
