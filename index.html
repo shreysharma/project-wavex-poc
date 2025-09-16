@@ -1472,6 +1472,12 @@
           // Create audio context to extract audio from video
           const audioContext = new AudioContext({ sampleRate: 16000 });
 
+          // Resume audio context if suspended (required for autoplay)
+          if (audioContext.state === 'suspended') {
+            await audioContext.resume();
+            console.log('Audio context resumed for video processing');
+          }
+
           // Create a MediaElementSource from the video element
           const source = audioContext.createMediaElementSource(videoPlayer);
 
@@ -1496,12 +1502,15 @@
               pcmBuffer[i] = Math.round(sample * 32767);
             }
 
+            // Check if we're getting actual audio data (not silence)
+            const audioLevel = Math.max(...inputBuffer.map(Math.abs));
+
             // Send to regular STT WebSocket (same as microphone)
             websocket.send(pcmBuffer.buffer);
 
             // Log occasionally to verify audio is being sent
             if (Math.random() < 0.01) {
-              console.log(`Sending video audio to STT: ${pcmBuffer.buffer.byteLength} bytes`);
+              console.log(`Sending video audio to STT: ${pcmBuffer.buffer.byteLength} bytes, Audio level: ${audioLevel.toFixed(4)}`);
             }
           };
 
@@ -1529,11 +1538,17 @@
           console.log("Video processing started automatically");
 
           // Start video playback
-          await videoPlayer.play();
-          console.log(
-            "Video streaming started - processing audio in real-time"
-          );
-          console.log("Video duration:", videoPlayer.duration, "Audio context sample rate:", audioContext.sampleRate);
+          try {
+            await videoPlayer.play();
+            console.log("Video streaming started - processing audio in real-time");
+            console.log("Video duration:", videoPlayer.duration, "Audio context sample rate:", audioContext.sampleRate);
+            console.log("Audio context state:", audioContext.state);
+          } catch (playError) {
+            console.log("Autoplay failed, user interaction required:", playError);
+            // Show play button for manual start
+            document.getElementById('videoPlayBtn').style.opacity = '1';
+            document.getElementById('playIcon').classList.remove('hidden');
+          }
         } catch (error) {
           console.error(`Error starting video streaming: ${error.message}`);
           stopVideoStreaming();
