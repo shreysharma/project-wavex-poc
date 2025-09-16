@@ -617,11 +617,22 @@
         // Generate waveform visualization
         generateWaveform(file);
 
-        // Auto-start audio processing
+        // Store file and check One Shot mode
         selectedAudioFile = file;
-        setTimeout(() => {
-          startAudioStreaming();
-        }, 500);
+
+        if (isOneShotEnabled) {
+          // ONE SHOT MODE: Use batch processing API
+          console.log("One Shot mode: Using /translate-file API for batch processing");
+          setTimeout(() => {
+            processAudioFileCompleteAPI(file);
+          }, 500);
+        } else {
+          // LIVE MODE: Use streaming
+          console.log("Live mode: Using streaming audio processing");
+          setTimeout(() => {
+            startAudioStreaming();
+          }, 500);
+        }
       }
 
       // Generate dummy waveform visualization
@@ -669,10 +680,19 @@
         customVideoPlayer.classList.remove("hidden");
         selectedVideoFile = file; // Store for processing
 
-        // Auto-start video processing
-        setTimeout(() => {
-          startVideoStreaming();
-        }, 500);
+        if (isOneShotEnabled) {
+          // ONE SHOT MODE: Use batch processing API
+          console.log("One Shot mode: Using /translate-video API for batch processing");
+          setTimeout(() => {
+            processVideoFileCompleteAPI(file);
+          }, 500);
+        } else {
+          // LIVE MODE: Use streaming
+          console.log("Live mode: Using streaming video processing");
+          setTimeout(() => {
+            startVideoStreaming();
+          }, 500);
+        }
       }
 
       function showTextPreview(file) {
@@ -708,7 +728,9 @@
 
       // Function to connect to WebSocket
       function connectWebSocket() {
-        const wsUrl = "wss://wavex-poc-infra-dev-l2clzohaha-uc.a.run.app/stt-test";
+        // Dynamic protocol detection for HTTPS/HTTP compatibility
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/stt-test`;
         console.log(`Connecting to ${wsUrl}`);
 
         websocket = new WebSocket(wsUrl);
@@ -816,7 +838,7 @@
                   const existingOriginal = document.getElementById("originalTextContent").innerHTML || "";
                   const latencyText = data.latency ? `[STT:${data.latency.stt_ms}ms]` : "";
                   const newOriginalEntry = `<div class="mb-1 text-sm">
-                    <div class="font-medium">${sourceType}: ${data.original_text}</div>
+                    <div class="font-medium">${data.original_text}</div>
                     <div class="text-xs text-gray-500">${latencyText}</div>
                   </div>`;
                   document.getElementById("originalTextContent").innerHTML = existingOriginal + newOriginalEntry;
@@ -1334,6 +1356,178 @@
         }
       }
 
+      // One Shot Mode: Complete audio file processing
+      async function processAudioFileCompleteAPI(file) {
+        try {
+          console.log(`Processing complete audio file: ${file.name}`);
+
+          // Update status
+          const headerStatus = document.getElementById("headerConnectionStatus");
+          if (headerStatus) {
+            headerStatus.textContent = "One Shot: Processing Audio File";
+            headerStatus.className = "bg-yellow-100 w-fit px-3 py-1 rounded text-sm text-yellow-700";
+          }
+
+          // Show progress
+          document.getElementById('translationProgress').classList.remove('hidden');
+          document.getElementById('progressText').textContent = 'Processing complete audio file...';
+
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('input_language', 'hi');
+          formData.append('output_language', document.getElementById('selectedLang').value);
+
+          const response = await fetch('/translate-file', {
+            method: 'POST',
+            body: formData
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          const result = await response.json();
+
+          if (!result.success) {
+            throw new Error(result.error || 'Audio processing failed');
+          }
+
+          // Hide progress and show results
+          document.getElementById('translationProgress').classList.add('hidden');
+
+          // Show original text
+          document.getElementById('originalTextDisplay').classList.remove('hidden');
+          const existingOriginal = document.getElementById('originalTextContent').innerHTML || '';
+          const newOriginalEntry = `<div class="mb-1 text-sm">
+            <div class="font-medium">Audio File: ${result.original_text}</div>
+            <div class="text-xs text-gray-500">[Complete File Processing]</div>
+          </div>`;
+          document.getElementById('originalTextContent').innerHTML = existingOriginal + newOriginalEntry;
+
+          // Show target language result
+          const targetLangName = getLangNameFromCode(result.target_language);
+          if (targetLangName) {
+            document.getElementById('languageGrid').style.display = 'flex';
+            document.getElementById('noTranslationsMsg').style.display = 'none';
+
+            const resultDiv = document.getElementById(`${targetLangName}-result`);
+            if (resultDiv) {
+              resultDiv.classList.remove('hidden');
+              const existingText = document.getElementById(`${targetLangName}-text`).innerHTML || '';
+              const newEntry = `<div class="mb-2 p-2 bg-white rounded border-l-4 border-yellow-400">
+                <div class="font-medium">${result.translated_text}</div>
+                <div class="text-xs text-gray-500 mt-1">[STT:${result.latency.stt_ms}ms, Trans:${result.latency.translate_ms}ms, TTS:${result.latency.tts_ms}ms, Total:${result.latency.total_ms}ms]</div>
+              </div>`;
+              document.getElementById(`${targetLangName}-text`).innerHTML = existingText + newEntry;
+            }
+          }
+
+          console.log('Complete audio file processed successfully');
+
+        } catch (error) {
+          console.error('Audio file processing error:', error);
+          document.getElementById('translationProgress').classList.add('hidden');
+          alert('Audio processing failed: ' + error.message);
+        }
+      }
+
+      // One Shot Mode: Complete video file processing
+      async function processVideoFileCompleteAPI(file) {
+        try {
+          console.log(`Processing complete video file: ${file.name}`);
+
+          // Update status
+          const headerStatus = document.getElementById("headerConnectionStatus");
+          if (headerStatus) {
+            headerStatus.textContent = "One Shot: Processing Video File";
+            headerStatus.className = "bg-yellow-100 w-fit px-3 py-1 rounded text-sm text-yellow-700";
+          }
+
+          // Show progress
+          document.getElementById('translationProgress').classList.remove('hidden');
+          document.getElementById('progressText').textContent = 'Processing complete video file...';
+
+          const formData = new FormData();
+          formData.append('file', file);
+          formData.append('input_language', 'hi');
+          formData.append('output_language', document.getElementById('selectedLang').value);
+
+          const response = await fetch('/translate-video', {
+            method: 'POST',
+            body: formData
+          });
+
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          const result = await response.json();
+
+          if (!result.success) {
+            throw new Error(result.error || 'Video processing failed');
+          }
+
+          // Hide progress and show results
+          document.getElementById('translationProgress').classList.add('hidden');
+
+          // Show original text
+          document.getElementById('originalTextDisplay').classList.remove('hidden');
+          const existingOriginal = document.getElementById('originalTextContent').innerHTML || '';
+          const newOriginalEntry = `<div class="mb-1 text-sm">
+            <div class="font-medium">Video File: ${result.original_text}</div>
+            <div class="text-xs text-gray-500">[Complete File Processing]</div>
+          </div>`;
+          document.getElementById('originalTextContent').innerHTML = existingOriginal + newOriginalEntry;
+
+          // Show target language result
+          const targetLangName = getLangNameFromCode(result.target_language);
+          if (targetLangName) {
+            document.getElementById('languageGrid').style.display = 'flex';
+            document.getElementById('noTranslationsMsg').style.display = 'none';
+
+            const resultDiv = document.getElementById(`${targetLangName}-result`);
+            if (resultDiv) {
+              resultDiv.classList.remove('hidden');
+              const existingText = document.getElementById(`${targetLangName}-text`).innerHTML || '';
+              const newEntry = `<div class="mb-2 p-2 bg-white rounded border-l-4 border-yellow-400">
+                <div class="font-medium">${result.translated_text}</div>
+                <div class="text-xs text-gray-500 mt-1">[STT:${result.latency.stt_ms}ms, Trans:${result.latency.translate_ms}ms, TTS:${result.latency.tts_ms}ms, Total:${result.latency.total_ms}ms]</div>
+              </div>`;
+              document.getElementById(`${targetLangName}-text`).innerHTML = existingText + newEntry;
+            }
+          }
+
+          // Download translated video if available
+          if (result.video_data) {
+            const videoData = atob(result.video_data);
+            const videoArray = new Uint8Array(videoData.length);
+            for (let i = 0; i < videoData.length; i++) {
+              videoArray[i] = videoData.charCodeAt(i);
+            }
+
+            const blob = new Blob([videoArray], { type: 'video/mp4' });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `translated_${file.name}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            console.log('Translated video downloaded');
+          }
+
+          console.log('Complete video file processed successfully');
+
+        } catch (error) {
+          console.error('Video file processing error:', error);
+          document.getElementById('translationProgress').classList.add('hidden');
+          alert('Video processing failed: ' + error.message);
+        }
+      }
+
       // Function to make 12 parallel API requests for video mode
       async function translateToAllLanguagesViaAPI(originalText, sttLatency) {
         try {
@@ -1356,46 +1550,41 @@
             // { code: "as", name: "assamese" } // Skip to make it 12 languages
           ];
 
-          // Make 12 parallel API requests
-          const translationPromises = targetLanguages.map(async (lang) => {
-            try {
-              const formData = new FormData();
-              formData.append("text", originalText);
-              formData.append("source_language", "auto");
-              formData.append("target_language", lang.code);
+          // Use the existing /translate-text endpoint which returns all languages
+          const formData = new FormData();
+          formData.append("text", originalText);
+          formData.append("source_language", "hi");
 
-              const response = await fetch("/translate-text-single", {
-                method: "POST",
-                body: formData,
-              });
-
-              const result = await response.json();
-
-              return {
-                langName: lang.name,
-                langCode: lang.code,
-                translatedText: result.success ? result.translated_text : "[Translation failed]",
-                latency: result.latency_ms || 0
-              };
-            } catch (error) {
-              console.error(`Translation failed for ${lang.code}:`, error);
-              return {
-                langName: lang.name,
-                langCode: lang.code,
-                translatedText: "[API Error]",
-                latency: 0
-              };
-            }
+          const response = await fetch("/translate-text", {
+            method: "POST",
+            body: formData,
           });
 
-          // Wait for all 12 requests to complete
-          const results = await Promise.all(translationPromises);
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          const result = await response.json();
+
+          if (!result.success) {
+            throw new Error(result.error || "Translation failed");
+          }
+
+          console.log("Got all language translations:", result.translations);
+
+          // Convert to our format
+          const translationResults = result.translations.map(translation => ({
+            langName: getLangNameFromCode(translation.language),
+            langCode: translation.language,
+            translatedText: translation.translated_text,
+            latency: translation.latency_ms
+          })).filter(t => t.langName); // Filter out unmapped languages
 
           // Show results in UI
           document.getElementById("languageGrid").style.display = "flex";
           document.getElementById("noTranslationsMsg").style.display = "none";
 
-          results.forEach(result => {
+          translationResults.forEach(result => {
             const resultDiv = document.getElementById(`${result.langName}-result`);
             if (resultDiv) {
               resultDiv.classList.remove("hidden");
@@ -1408,7 +1597,7 @@
             }
           });
 
-          console.log(`Completed 12 parallel translations in video mode`);
+          console.log(`Completed video translations via /translate-text endpoint: ${translationResults.length} languages`);
 
         } catch (error) {
           console.error("Error in parallel video translations:", error);
