@@ -708,7 +708,7 @@
 
       // Function to connect to WebSocket
       function connectWebSocket() {
-        const wsUrl = "ws://wavex-poc-infra-dev-l2clzohaha-uc.a.run.app/stt-test";
+        const wsUrl = "wss://wavex-poc-infra-dev-l2clzohaha-uc.a.run.app/stt-test";
         console.log(`Connecting to ${wsUrl}`);
 
         websocket = new WebSocket(wsUrl);
@@ -744,9 +744,15 @@
             console.log(`VIDEO MODE - Received ${data.type}:`, data);
           }
 
-          // Handle different message types
+          // Handle different message types (simplified like simple_test.html)
           switch (data.type) {
+            case 'connected':
+            case 'streaming_started':
+              console.log(`SUCCESS ${data.message}`);
+              break;
+
             case "transcript":
+              console.log("TRANSCRIPT RECEIVED:", data);
               if (data.original_text && data.translated_text) {
                 // Check for duplicates using timestamp
                 const timestamp = data.timestamp;
@@ -1436,14 +1442,14 @@
             headerStatus.className = "bg-purple-100 w-fit px-3 py-1 rounded text-sm text-purple-700";
           }
 
-          // Send language settings to regular STT WebSocket
+          // Send language settings to regular STT WebSocket (match simple_test.html exactly)
           if (websocket && websocket.readyState === WebSocket.OPEN) {
             websocket.send(JSON.stringify({
               type: 'language_settings',
-              input_language: "auto",
-              output_language: "en"  // Temporary for STT processing
+              input_language: "hi",  // Use specific language like simple_test.html
+              output_language: "en"
             }));
-            console.log("Sent language settings to STT WebSocket for video mode");
+            console.log("Sent language settings to STT WebSocket for video mode: hi → en");
           }
 
           // Set video mode flag for WebSocket message handling
@@ -1543,6 +1549,13 @@
             console.log("Video streaming started - processing audio in real-time");
             console.log("Video duration:", videoPlayer.duration, "Audio context sample rate:", audioContext.sampleRate);
             console.log("Audio context state:", audioContext.state);
+            console.log("Video playing:", !videoPlayer.paused, "Current time:", videoPlayer.currentTime);
+
+            // Ensure video is actually playing
+            if (videoPlayer.paused) {
+              console.log("Video is paused, attempting to resume...");
+              await videoPlayer.play();
+            }
           } catch (playError) {
             console.log("Autoplay failed, user interaction required:", playError);
             // Show play button for manual start
