@@ -209,13 +209,14 @@ class SimpleSTTService:
         self.connection_lock = Lock()
         logger.info("Simple STT service initialized with keepalive support")
 
-    def start_streaming(self, websocket, input_language="hi", output_language="en"):
+    def start_streaming(self, websocket, input_language="hi", output_language="en", translate_service_ref=None):
         """Start continuous streaming transcription with dynamic languages"""
         try:
             # Store websocket reference and language settings
             self.websocket = websocket
             self.input_language = input_language
             self.output_language = output_language
+            self.translate_service = translate_service_ref
             self.processing_start_time = None  # Track when processing started
 
             # Initialize transcript queue
@@ -247,7 +248,7 @@ class SimpleSTTService:
 
                         # Translate using dynamic languages with timing
                         translate_start_time = time_module.time()
-                        translated_text = translate_service.translate_text(
+                        translated_text = stt_service_ref.translate_service.translate_text(
                             text=sentence,
                             target_language=stt_service_ref.output_language,
                             source_language=stt_service_ref.input_language,
@@ -389,19 +390,17 @@ class SimpleSTTService:
 # Thread pool for async operations
 executor = ThreadPoolExecutor(max_workers=4)
 
-# Initialize services
-stt_service = SimpleSTTService()
-translate_service = SimpleTranslateService()
+# Global services for REST endpoints only
+global_translate_service = SimpleTranslateService()
+global_tts_service = None
 
-# Initialize TTS service (optional)
-tts_service = None
+# Initialize global TTS service (optional) for REST endpoints
 try:
-    tts_service = ElevenLabsTTSService()
-    logger.info("TTS service initialized successfully with WebSocket API")
-
+    global_tts_service = ElevenLabsTTSService()
+    logger.info("Global TTS service initialized successfully with WebSocket API")
 except ValueError as e:
-    logger.warning(f"TTS service not available: {e}")
-    logger.info("TTS functionality will be disabled")
+    logger.warning(f"Global TTS service not available: {e}")
+    logger.info("TTS functionality will be disabled for REST endpoints")
 
 
 @app.get("/")
@@ -480,7 +479,7 @@ async def translate_complete_file(
 
         # Translate the complete transcript
         translate_start = time_module.time()
-        translated_text = translate_service.translate_text(
+        translated_text = global_translate_service.translate_text(
             text=transcript,
             target_language=output_language,
             source_language=input_language,
@@ -490,9 +489,9 @@ async def translate_complete_file(
         # Generate TTS if service is available
         tts_start = time_module.time()
         audio_data = None
-        if tts_service and translated_text:
+        if global_tts_service and translated_text:
             try:
-                audio_bytes = await tts_service.text_to_speech(translated_text)
+                audio_bytes = await global_tts_service.text_to_speech(translated_text)
                 if audio_bytes:
                     audio_data = base64.b64encode(audio_bytes).decode("utf-8")
                     logger.info(f" Generated TTS audio: {len(audio_bytes)} bytes")
@@ -622,7 +621,7 @@ async def translate_complete_video(
 
         # Translate the complete transcript
         translate_start = time_module.time()
-        translated_text = translate_service.translate_text(
+        translated_text = global_translate_service.translate_text(
             text=transcript,
             target_language=output_language,
             source_language=input_language,
@@ -632,9 +631,9 @@ async def translate_complete_video(
         # Generate TTS for the complete translation
         tts_start = time_module.time()
         translated_audio_path = None
-        if tts_service and translated_text:
+        if global_tts_service and translated_text:
             try:
-                audio_bytes = await tts_service.text_to_speech(translated_text)
+                audio_bytes = await global_tts_service.text_to_speech(translated_text)
                 if audio_bytes:
                     # Save TTS audio to temporary file
                     translated_audio_path = temp_video_path.replace(f'.{video_ext}', '_translated.mp3')
@@ -761,7 +760,7 @@ async def translate_text_to_all_languages(
         def translate_to_language(target_lang):
             try:
                 start = time_module.time()
-                translated = translate_service.translate_text(
+                translated = global_translate_service.translate_text(
                     text=text,
                     target_language=target_lang,
                     source_language=source_language
@@ -782,15 +781,14 @@ async def translate_text_to_all_languages(
                     "latency_ms": 0
                 }
 
-        # Execute translations in parallel
-        with executor as pool:
-            futures = {pool.submit(translate_to_language, lang): lang for lang in target_languages.keys()}
+        # Execute translations in parallel using global executor
+        futures = {executor.submit(translate_to_language, lang): lang for lang in target_languages.keys()}
 
-            translations = []
-            for future in as_completed(futures):
-                result = future.result()
-                translations.append(result)
-                logger.info(f"Completed {result['language']}: {result['translated_text'][:30]}...")
+        translations = []
+        for future in as_completed(futures):
+            result = future.result()
+            translations.append(result)
+            logger.info(f"Completed {result['language']}: {result['translated_text'][:30]}...")
 
         # Sort by language code for consistent output
         translations.sort(key=lambda x: x['language'])
@@ -823,9 +821,20 @@ async def translate_text_to_all_languages(
 
 @app.websocket("/stt-test")
 async def stt_websocket(websocket: WebSocket):
-    """Continuous streaming STT WebSocket endpoint - same as original"""
+    """Continuous streaming STT WebSocket endpoint with per-connection isolation"""
     await websocket.accept()
-    logger.info("WebSocket connected")
+    logger.info("WebSocket connected - creating isolated services")
+
+    # Create SEPARATE service instances for this connection
+    connection_stt_service = SimpleSTTService()
+    connection_translate_service = SimpleTranslateService()
+    connection_tts_service = None
+
+    try:
+        connection_tts_service = ElevenLabsTTSService()
+        logger.info("Connection TTS service initialized")
+    except ValueError as e:
+        logger.warning(f"Connection TTS service not available: {e}")
 
     try:
         # Send connection confirmation
@@ -881,7 +890,7 @@ async def stt_websocket(websocket: WebSocket):
                     del pending_tts_tasks[task_id]
 
                 # Check for pending transcripts
-                pending_transcripts = stt_service.get_pending_transcripts()
+                pending_transcripts = connection_stt_service.get_pending_transcripts()
                 for transcript_data in pending_transcripts:
                     # Send transcript immediately (without TTS for low latency)
                     transcript_without_tts = transcript_data.copy()
@@ -903,12 +912,12 @@ async def stt_websocket(websocket: WebSocket):
                     if (
                         transcript_data.get("needs_tts")
                         and transcript_data.get("translated_text")
-                        and tts_service
+                        and connection_tts_service
                         and len(pending_tts_tasks) < 3  # Limit concurrent TTS tasks
                     ):
                         task_id = time.time()
                         task = asyncio.create_task(
-                            _generate_tts_async(transcript_data, tts_service)
+                            _generate_tts_async(transcript_data, connection_tts_service)
                         )
                         pending_tts_tasks[task_id] = task
                         logger.info(
@@ -936,7 +945,7 @@ async def stt_websocket(websocket: WebSocket):
                         else:
                             logger.debug(f"Received {len(audio_data)} bytes of audio")
 
-                        stt_service.send_audio(audio_data)
+                        connection_stt_service.send_audio(audio_data)
                     else:
                         logger.debug("Audio received but streaming not started yet")
 
@@ -953,8 +962,8 @@ async def stt_websocket(websocket: WebSocket):
 
                             # Start streaming with the new language settings
                             if not streaming_started:
-                                stt_service.start_streaming(
-                                    websocket, input_language, output_language
+                                connection_stt_service.start_streaming(
+                                    websocket, input_language, output_language, connection_translate_service
                                 )
                                 streaming_started = True
 
@@ -984,8 +993,8 @@ async def stt_websocket(websocket: WebSocket):
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
     finally:
-        # Clean up streaming
-        stt_service.stop_streaming()
+        # Clean up streaming for this connection
+        connection_stt_service.stop_streaming()
 
 
 async def _generate_tts_async(transcript_data, tts_service):
