@@ -580,7 +580,7 @@
         }
         
         function connectWebSocket() {
-            const wsUrl = 'ws://localhost:8000/stt-test';
+            const wsUrl = 'wss://wavex-poc-infra-dev-435169433869.us-central1.run.app/stt-test';
             log(`Connecting to ${wsUrl}`);
 
             websocket = new WebSocket(wsUrl);
@@ -603,13 +603,15 @@
                         
                     case 'transcript':
                         if (data.original_text && data.translated_text) {
-                            const latencyInfo = data.latency ? ` [STT:${data.latency.stt_ms}ms, Trans:${data.latency.translate_ms}ms, TTS:${data.latency.tts_ms}ms, Total:${data.latency.total_ms}ms]` : '';
-                            addTranscript(`${data.original_text} → ${data.translated_text}${latencyInfo}`, data.is_final);
+                            // Only show transcripts that have TTS audio (complete processing)
+                            if (data.audio_data && data.latency && data.latency.tts_ms > 0) {
+                                const latencyInfo = ` [STT:${data.latency.stt_ms}ms, Trans:${data.latency.translate_ms}ms, TTS:${data.latency.tts_ms}ms, Total:${data.latency.total_ms}ms]`;
+                                addTranscript(`${data.original_text} → ${data.translated_text}${latencyInfo}`, data.is_final);
 
-                            // Play TTS audio if available
-                            if (data.audio_data) {
+                                // Play TTS audio
                                 playTTSAudio(data.audio_data, data.translated_text);
                             }
+                            // Skip fast transcripts without TTS to avoid duplicates
                         } else if (data.transcript) {
                             // Fallback for old format
                             addTranscript(data.transcript, data.is_final);

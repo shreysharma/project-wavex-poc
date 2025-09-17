@@ -7,14 +7,14 @@ import base64
 import json
 import logging
 import os
+import shutil
+import subprocess
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from threading import Lock, Timer
 
 import requests
-import subprocess
-import shutil
 
 # WebSocket client for Eleven Labs TTS
 import websockets
@@ -65,8 +65,7 @@ class AzureTTSService:
 
             # Initialize speech config
             self.speech_config = speechsdk.SpeechConfig(
-                subscription=self.speech_key,
-                region=self.speech_region
+                subscription=self.speech_key, region=self.speech_region
             )
 
             # Set audio format to MP3 for compatibility
@@ -75,10 +74,16 @@ class AzureTTSService:
             )
 
             # Configure default voice and speed
-            self.default_voice_name = os.getenv("AZURE_TTS_VOICE_NAME", "en-US-AvaMultilingualNeural")
-            self.speaking_rate = float(os.getenv("AZURE_TTS_SPEAKING_RATE", "1.0"))  # 1.0 = normal speed
+            self.default_voice_name = os.getenv(
+                "AZURE_TTS_VOICE_NAME", "en-US-AvaMultilingualNeural"
+            )
+            self.speaking_rate = float(
+                os.getenv("AZURE_TTS_SPEAKING_RATE", "1.0")
+            )  # 1.0 = normal speed
 
-            logger.info(f"Azure TTS service initialized - Region: {self.speech_region}, Voice: {self.default_voice_name}, Rate: {self.speaking_rate}x")
+            logger.info(
+                f"Azure TTS service initialized - Region: {self.speech_region}, Voice: {self.default_voice_name}, Rate: {self.speaking_rate}x"
+            )
 
         except Exception as e:
             raise ValueError(f"Failed to initialize Azure Speech client: {e}")
@@ -139,8 +144,9 @@ class AzureTTSService:
             if not text or not text.strip():
                 return b""
 
-            import azure.cognitiveservices.speech as speechsdk
             import asyncio
+
+            import azure.cognitiveservices.speech as speechsdk
 
             # Get appropriate voice, language, and speaking rate for the target language
             voice_name, language_code = self._get_voice_and_language(target_language)
@@ -172,16 +178,22 @@ class AzureTTSService:
                     return result.audio_data
                 elif result.reason == speechsdk.ResultReason.Canceled:
                     cancellation_details = speechsdk.CancellationDetails(result)
-                    raise Exception(f"Speech synthesis canceled: {cancellation_details.reason}")
+                    raise Exception(
+                        f"Speech synthesis canceled: {cancellation_details.reason}"
+                    )
                 else:
-                    raise Exception(f"Speech synthesis failed with reason: {result.reason}")
+                    raise Exception(
+                        f"Speech synthesis failed with reason: {result.reason}"
+                    )
 
             # Run synthesis in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
             audio_data = await loop.run_in_executor(None, synthesis_task)
 
             if audio_data:
-                logger.info(f"Generated {len(audio_data)} bytes of Azure TTS audio for: '{text}' (voice: {voice_name})")
+                logger.info(
+                    f"Generated {len(audio_data)} bytes of Azure TTS audio for: '{text}' (voice: {voice_name})"
+                )
                 return audio_data
             else:
                 logger.warning(f"No audio generated for text: '{text}'")
@@ -250,7 +262,13 @@ class SimpleSTTService:
         self.connection_lock = Lock()
         logger.info("Simple STT service initialized with keepalive support")
 
-    def start_streaming(self, websocket, input_language="hi", output_language="en", translate_service_ref=None):
+    def start_streaming(
+        self,
+        websocket,
+        input_language="hi",
+        output_language="en",
+        translate_service_ref=None,
+    ):
         """Start continuous streaming transcription with dynamic languages"""
         try:
             # Store websocket reference and language settings
@@ -289,10 +307,12 @@ class SimpleSTTService:
 
                         # Translate using dynamic languages with timing
                         translate_start_time = time_module.time()
-                        translated_text = stt_service_ref.translate_service.translate_text(
-                            text=sentence,
-                            target_language=stt_service_ref.output_language,
-                            source_language=stt_service_ref.input_language,
+                        translated_text = (
+                            stt_service_ref.translate_service.translate_text(
+                                text=sentence,
+                                target_language=stt_service_ref.output_language,
+                                source_language=stt_service_ref.input_language,
+                            )
                         )
                         translate_end_time = time_module.time()
 
@@ -446,8 +466,14 @@ except ValueError as e:
 
 @app.get("/")
 async def serve_test_page():
-    """Serve the main index HTML"""
+    """Serve the simple test HTML"""
     return FileResponse("index.html")
+
+
+@app.get("/ui")
+async def serve_old_ui():
+    """Serve the older test UI"""
+    return FileResponse("simple_test.html")
 
 
 @app.post("/translate-file")
@@ -532,7 +558,9 @@ async def translate_complete_file(
         audio_data = None
         if global_tts_service and translated_text:
             try:
-                audio_bytes = await global_tts_service.text_to_speech(translated_text, output_language)
+                audio_bytes = await global_tts_service.text_to_speech(
+                    translated_text, output_language
+                )
                 if audio_bytes:
                     audio_data = base64.b64encode(audio_bytes).decode("utf-8")
                     logger.info(f" Generated TTS audio: {len(audio_bytes)} bytes")
@@ -580,7 +608,7 @@ async def translate_complete_file(
 async def translate_complete_video(
     file: UploadFile = File(...),
     input_language: str = Form("hi"),
-    output_language: str = Form("en")
+    output_language: str = Form("en"),
 ):
     """Translate a complete video file and return with replaced audio track"""
     try:
@@ -594,22 +622,33 @@ async def translate_complete_video(
         start_time = time_module.time()
 
         # Save video to temporary file
-        video_ext = file.filename.split('.')[-1] if '.' in file.filename else 'mp4'
-        with tempfile.NamedTemporaryFile(suffix=f'.{video_ext}', delete=False) as temp_video:
+        video_ext = file.filename.split(".")[-1] if "." in file.filename else "mp4"
+        with tempfile.NamedTemporaryFile(
+            suffix=f".{video_ext}", delete=False
+        ) as temp_video:
             temp_video.write(video_data)
             temp_video_path = temp_video.name
 
         # Extract audio from video using ffmpeg
-        audio_path = temp_video_path.replace(f'.{video_ext}', '.wav')
+        audio_path = temp_video_path.replace(f".{video_ext}", ".wav")
         try:
-            subprocess.run([
-                'ffmpeg', '-i', temp_video_path,
-                '-vn',  # No video
-                '-acodec', 'pcm_s16le',  # 16-bit PCM
-                '-ar', '16000',  # 16kHz sample rate
-                '-ac', '1',  # Mono
-                audio_path
-            ], check=True, capture_output=True)
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-i",
+                    temp_video_path,
+                    "-vn",  # No video
+                    "-acodec",
+                    "pcm_s16le",  # 16-bit PCM
+                    "-ar",
+                    "16000",  # 16kHz sample rate
+                    "-ac",
+                    "1",  # Mono
+                    audio_path,
+                ],
+                check=True,
+                capture_output=True,
+            )
 
             logger.info(f"Audio extracted to: {audio_path}")
 
@@ -639,11 +678,13 @@ async def translate_complete_video(
                 headers=headers,
                 params=params,
                 data=audio_file,
-                timeout=300  # 5 minute timeout for large video files
+                timeout=300,  # 5 minute timeout for large video files
             )
 
         if response.status_code != 200:
-            raise Exception(f"Deepgram API error: {response.status_code} - {response.text}")
+            raise Exception(
+                f"Deepgram API error: {response.status_code} - {response.text}"
+            )
 
         result = response.json()
         stt_end = time_module.time()
@@ -674,11 +715,15 @@ async def translate_complete_video(
         translated_audio_path = None
         if global_tts_service and translated_text:
             try:
-                audio_bytes = await global_tts_service.text_to_speech(translated_text, output_language)
+                audio_bytes = await global_tts_service.text_to_speech(
+                    translated_text, output_language
+                )
                 if audio_bytes:
                     # Save TTS audio to temporary file
-                    translated_audio_path = temp_video_path.replace(f'.{video_ext}', '_translated.mp3')
-                    with open(translated_audio_path, 'wb') as f:
+                    translated_audio_path = temp_video_path.replace(
+                        f".{video_ext}", "_translated.mp3"
+                    )
+                    with open(translated_audio_path, "wb") as f:
                         f.write(audio_bytes)
                     logger.info(f"Generated TTS audio: {len(audio_bytes)} bytes")
             except Exception as tts_error:
@@ -689,18 +734,29 @@ async def translate_complete_video(
         # Replace audio track in video if TTS was successful
         output_video_path = None
         if translated_audio_path:
-            output_video_path = temp_video_path.replace(f'.{video_ext}', '_final.mp4')
+            output_video_path = temp_video_path.replace(f".{video_ext}", "_final.mp4")
             try:
-                subprocess.run([
-                    'ffmpeg', '-i', temp_video_path,  # Input video
-                    '-i', translated_audio_path,     # Input translated audio
-                    '-c:v', 'copy',                  # Copy video without re-encoding
-                    '-c:a', 'aac',                   # Encode audio as AAC
-                    '-map', '0:v:0',                 # Map video from first input
-                    '-map', '1:a:0',                 # Map audio from second input
-                    '-shortest',                     # Match shortest stream duration
-                    output_video_path
-                ], check=True, capture_output=True)
+                subprocess.run(
+                    [
+                        "ffmpeg",
+                        "-i",
+                        temp_video_path,  # Input video
+                        "-i",
+                        translated_audio_path,  # Input translated audio
+                        "-c:v",
+                        "copy",  # Copy video without re-encoding
+                        "-c:a",
+                        "aac",  # Encode audio as AAC
+                        "-map",
+                        "0:v:0",  # Map video from first input
+                        "-map",
+                        "1:a:0",  # Map audio from second input
+                        "-shortest",  # Match shortest stream duration
+                        output_video_path,
+                    ],
+                    check=True,
+                    capture_output=True,
+                )
 
                 logger.info(f"Video with translated audio created: {output_video_path}")
 
@@ -717,8 +773,8 @@ async def translate_complete_video(
         # Read the final video file for response
         output_video_data = None
         if output_video_path and os.path.exists(output_video_path):
-            with open(output_video_path, 'rb') as f:
-                output_video_data = base64.b64encode(f.read()).decode('utf-8')
+            with open(output_video_path, "rb") as f:
+                output_video_data = base64.b64encode(f.read()).decode("utf-8")
 
         # Cleanup temp files
         try:
@@ -744,7 +800,7 @@ async def translate_complete_video(
                 "translate_ms": round(translate_latency, 2),
                 "tts_ms": round(tts_latency, 2),
                 "total_ms": round(total_time * 1000, 2),
-            }
+            },
         }
 
         logger.info(f"Complete video processed successfully in {total_time:.2f}s")
@@ -752,16 +808,12 @@ async def translate_complete_video(
 
     except Exception as e:
         logger.error(f"Error processing complete video: {e}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @app.post("/translate-text")
 async def translate_text_to_all_languages(
-    text: str = Form(...),
-    source_language: str = Form("auto")
+    text: str = Form(...), source_language: str = Form("auto")
 ):
     """Translate text to all supported languages in parallel"""
     try:
@@ -790,7 +842,7 @@ async def translate_text_to_all_languages(
             "pa": "Punjabi (ਪੰਜਾਬੀ)",
             "ur": "Urdu (اردو)",
             "or": "Odia (ଓଡ଼ିଆ)",
-            "as": "Assamese (অসমীয়া)"
+            "as": "Assamese (অসমীয়া)",
         }
 
         # Remove source language from targets if it exists
@@ -804,14 +856,14 @@ async def translate_text_to_all_languages(
                 translated = global_translate_service.translate_text(
                     text=text,
                     target_language=target_lang,
-                    source_language=source_language
+                    source_language=source_language,
                 )
                 end = time_module.time()
                 return {
                     "language": target_lang,
                     "language_name": target_languages[target_lang],
                     "translated_text": translated,
-                    "latency_ms": round((end - start) * 1000, 2)
+                    "latency_ms": round((end - start) * 1000, 2),
                 }
             except Exception as e:
                 logger.error(f"Translation failed for {target_lang}: {e}")
@@ -819,23 +871,32 @@ async def translate_text_to_all_languages(
                     "language": target_lang,
                     "language_name": target_languages[target_lang],
                     "translated_text": f"[Translation failed: {str(e)}]",
-                    "latency_ms": 0
+                    "latency_ms": 0,
                 }
 
         # Execute translations in parallel using global executor
-        futures = {executor.submit(translate_to_language, lang): lang for lang in target_languages.keys()}
+        futures = {
+            executor.submit(translate_to_language, lang): lang
+            for lang in target_languages.keys()
+        }
 
         translations = []
         for future in as_completed(futures):
             result = future.result()
             translations.append(result)
-            logger.info(f"Completed {result['language']}: {result['translated_text'][:30]}...")
+            logger.info(
+                f"Completed {result['language']}: {result['translated_text'][:30]}..."
+            )
 
         # Sort by language code for consistent output
-        translations.sort(key=lambda x: x['language'])
+        translations.sort(key=lambda x: x["language"])
 
         total_time = time_module.time() - start_time
-        avg_latency = sum(t['latency_ms'] for t in translations) / len(translations) if translations else 0
+        avg_latency = (
+            sum(t["latency_ms"] for t in translations) / len(translations)
+            if translations
+            else 0
+        )
 
         response_data = {
             "success": True,
@@ -845,19 +906,18 @@ async def translate_text_to_all_languages(
             "summary": {
                 "total_languages": len(translations),
                 "total_time_ms": round(total_time * 1000, 2),
-                "average_latency_ms": round(avg_latency, 2)
-            }
+                "average_latency_ms": round(avg_latency, 2),
+            },
         }
 
-        logger.info(f"Parallel translation completed: {len(translations)} languages in {total_time:.2f}s")
+        logger.info(
+            f"Parallel translation completed: {len(translations)} languages in {total_time:.2f}s"
+        )
         return response_data
 
     except Exception as e:
         logger.error(f"Error in parallel text translation: {e}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
 @app.websocket("/stt-test")
@@ -1004,7 +1064,10 @@ async def stt_websocket(websocket: WebSocket):
                             # Start streaming with the new language settings
                             if not streaming_started:
                                 connection_stt_service.start_streaming(
-                                    websocket, input_language, output_language, connection_translate_service
+                                    websocket,
+                                    input_language,
+                                    output_language,
+                                    connection_translate_service,
                                 )
                                 streaming_started = True
 
@@ -1043,8 +1106,7 @@ async def _generate_tts_async(transcript_data, tts_service):
     tts_start_time = time.time()
     try:
         audio_bytes = await tts_service.text_to_speech(
-            transcript_data["translated_text"],
-            transcript_data["target_language"]
+            transcript_data["translated_text"], transcript_data["target_language"]
         )
         tts_end_time = time.time()
 
