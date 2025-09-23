@@ -137,6 +137,7 @@ interface AppContextType {
   translateText: (text: string) => Promise<void>;
   processAudioFile: (file: File) => Promise<void>;
   processVideoFile: (file: File) => Promise<void>;
+  clearAllHistoryAndStopProcesses: () => Promise<void>;
   
   // One Shot Mode state
   oneShotResults: TranslationResult[];
@@ -155,7 +156,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
   // Connection state
   const [isConnected, setIsConnected] = useState(false);
   const [connectedSTTCount, setConnectedSTTCount] = useState(0);
-  const [totalSTTCount, setTotalSTTCount] = useState(12);
+  const [totalSTTCount, setTotalSTTCount] = useState(13);
   const [isInitialConnection, setIsInitialConnection] = useState(true);
 
   // Language state
@@ -164,6 +165,9 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
 
   // One shot mode state
   const [isOneShotMode, setIsOneShotMode] = useState(false);
+  
+  // Session tracking to prevent cross-contamination
+  const [currentSessionId, setCurrentSessionId] = useState(() => Date.now().toString());
 
   // Media popup state
   const [isPopupOpen, setIsPopupOpen] = useState(false);
@@ -397,6 +401,12 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
   const translateText = async (text: string) => {
     if (!text.trim()) return;
 
+    // Clear all previous results and queues when starting new translation
+    console.log('[TEXT TRANSLATE] Clearing previous results...');
+    setTranslationResults([]);
+    setOneShotResults([]);
+    clearAllQueues();
+
     setIsTranslating(true);
     try {
       const { TranslationService } = await import('@/services/translationService');
@@ -406,7 +416,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       // Also add to global language queues for STT display
       results.forEach(result => {
         const audioChunk: AudioChunk = {
-          id: `text-${result.language.code}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+          id: `${currentSessionId}-text-${result.language.code}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
           audio_data: '', // No audio for text translations
           translated_text: result.translated_text,
           original_text: result.original_text,
@@ -461,7 +471,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
               batchResults.forEach(result => {
                 // Add ALL results, even failed ones
                 const audioChunk: AudioChunk = {
-                  id: `oneshot-batch-${result.language.code}-${Date.now()}`,
+                  id: `${currentSessionId}-oneshot-batch-${result.language.code}-${Date.now()}`,
                   audio_data: result.success ? (result.audio_data || '') : '',
                   translated_text: result.translated_text || `[Error: ${result.error || 'Translation failed'}]`,
                   original_text: result.original_text,
@@ -494,7 +504,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         results.forEach(result => {
           if (result.success && result.translated_text) {
             const audioChunk: AudioChunk = {
-              id: `oneshot-${result.language.code}-${Date.now()}`,
+              id: `${currentSessionId}-oneshot-${result.language.code}-${Date.now()}`,
               audio_data: result.audio_data || result.video_data || '', // Use video_data for video mode, audio_data for audio mode
               translated_text: result.translated_text,
               original_text: result.original_text,
@@ -513,14 +523,15 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         const wsService = WebSocketService.getInstance();
         wsService.setAudioProcessingActive(true);
 
-        // Force reconnect all WebSocket connections to ensure fresh start
-        console.log('[AUDIO] Forcing reconnection of all WebSocket connections...');
+        // Connect WebSocket connections when user hits translate for live mode
+        console.log('[AUDIO] Connecting WebSocket connections for live streaming...');
         setIsInitialConnection(false);
         try {
-          await wsService.forceReconnectAll();
-          console.log('[AUDIO] WebSocket reconnection completed successfully');
+          await wsService.connectAll(selectedLanguage.code);
+          console.log('[AUDIO] WebSocket connections established successfully');
         } catch (error) {
-          console.warn('[AUDIO] WebSocket reconnection failed, continuing with existing connections:', error);
+          console.warn('[AUDIO] WebSocket connection failed, continuing anyway:', error);
+          // Continue with processing even if some connections fail
         }
 
         // Send fresh language_settings to start backend processing
@@ -583,13 +594,11 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
   };
 
   const streamAudioViaWebSockets = async (file: File) => {
-    console.log('Live Mode: Starting real-time audio streaming via existing STT WebSocket connections');
-
-    if (!isConnected) {
-      throw new Error('STT WebSocket connections not ready for live streaming');
-    }
+    console.log('Live Mode: Starting real-time audio streaming via available STT WebSocket connections');
 
     const wsService = WebSocketService.getInstance();
+    const connectionStatus = wsService.getConnectionStatus();
+    console.log(`[STREAM] Starting with ${connectionStatus.connected}/${connectionStatus.total} connections available`);
 
     try {
       // Convert audio to streaming format (like index.html live mode)
@@ -597,7 +606,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       const arrayBuffer = await file.arrayBuffer();
       const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-      console.log(`Live streaming: ${audioBuffer.duration.toFixed(2)}s audio file via ${connectedSTTCount} STT connections`);
+      console.log(`Live streaming: ${audioBuffer.duration.toFixed(2)}s audio file via ${connectionStatus.connected} STT connections`);
 
       // Convert to PCM and stream in real-time chunks
       const channelData = audioBuffer.getChannelData(0);
@@ -635,7 +644,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         // Log progress occasionally
         const progress = (currentIndex / channelData.length * 100).toFixed(1);
         if (currentIndex % (chunkSize * 10) === 0) {
-          console.log(`Live streaming progress: ${progress}% (${connectedSTTCount} STT connections)`);
+          console.log(`Live streaming progress: ${progress}% (${connectionStatus.connected} STT connections)`);
         }
 
         currentIndex += chunkSize;
@@ -802,7 +811,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
               batchResults.forEach(result => {
                 // Add ALL results, even failed ones
                 const audioChunk: AudioChunk = {
-                  id: `oneshot-batch-${result.language.code}-${Date.now()}`,
+                  id: `${currentSessionId}-oneshot-batch-${result.language.code}-${Date.now()}`,
                   audio_data: result.success ? (result.video_data || result.audio_data || '') : '',
                   translated_text: result.translated_text || `[Error: ${result.error || 'Translation failed'}]`,
                   original_text: result.original_text,
@@ -835,7 +844,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         results.forEach(result => {
           if (result.success && result.translated_text) {
             const audioChunk: AudioChunk = {
-              id: `oneshot-${result.language.code}-${Date.now()}`,
+              id: `${currentSessionId}-oneshot-${result.language.code}-${Date.now()}`,
               audio_data: result.audio_data || result.video_data || '', // Use video_data for video mode, audio_data for audio mode
               translated_text: result.translated_text,
               original_text: result.original_text,
@@ -854,13 +863,14 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         const wsService = WebSocketService.getInstance();
         wsService.setAudioProcessingActive(true);
 
-        // Force reconnect all WebSocket connections to ensure fresh start
-        console.log('[VIDEO] Forcing reconnection of all WebSocket connections...');
+        // Connect WebSocket connections when user hits translate for live mode
+        console.log('[VIDEO] Connecting WebSocket connections for live streaming...');
         try {
-          await wsService.forceReconnectAll();
-          console.log('[VIDEO] WebSocket reconnection completed successfully');
+          await wsService.connectAll(selectedLanguage.code);
+          console.log('[VIDEO] WebSocket connections established successfully');
         } catch (error) {
-          console.warn('[VIDEO] WebSocket reconnection failed, continuing with existing connections:', error);
+          console.warn('[VIDEO] WebSocket connection failed, continuing anyway:', error);
+          // Continue with processing even if some connections fail
         }
 
         // Send fresh language_settings to start backend processing
@@ -882,36 +892,98 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     }
   };
 
-  // Clear activity when switching between One Shot and Live Mode
-  useEffect(() => {
-    if (isOneShotMode) {
-      console.log('[ONE SHOT MODE] Clearing all WebSocket activity...');
+  const clearAllHistoryAndStopProcesses = async () => {
+    console.log('[CLEAR ALL] Starting comprehensive cleanup of all history and processes...');
+    
+    try {
+      // Import services
       const wsService = WebSocketService.getInstance();
       const queueService = STTQueueService.getInstance();
       const sessionService = AudioSessionService.getInstance();
       
+      // Stop all processing flags first
+      setIsTranslating(false);
+      setIsWaitingForAudioChunks(false);
+      
+      // Clear all translation results and progress
+      setTranslationResults([]);
+      setOneShotResults([]);
+      setOneShotProgress({ completed: 0, total: 0 });
+      
+      // Clear input text
+      setInputText('');
+      
+      // Clear selected files
+      setSelectedAudioFile(null);
+      setSelectedVideoFile(null);
+      
+      // Clear media type back to text
+      setSelectedMediaType('text');
+      
       // Disconnect all WebSocket connections
       wsService.disconnectAll();
+      console.log('[CLEAR ALL] Disconnected all WebSocket connections');
       
-      // Clear all queues and sessions
+      // Stop any ongoing audio processing
+      wsService.setAudioProcessingActive(false);
+      
+      // Clear all language queues multiple times to ensure complete cleanup
+      clearAllQueues();
       queueService.clearAllQueues();
       sessionService.clearAllSessions();
-      clearAllQueues();
+      
+      // Multiple clearing attempts with delays to ensure complete cleanup
+      setTimeout(() => {
+        clearAllQueues();
+        queueService.clearAllQueues();
+        console.log('[CLEAR ALL] Second queue clear completed');
+      }, 50);
+      
+      setTimeout(() => {
+        clearAllQueues();
+        queueService.clearAllQueues();
+        console.log('[CLEAR ALL] Third queue clear completed');
+      }, 200);
+      
+      setTimeout(() => {
+        clearAllQueues();
+        queueService.clearAllQueues();
+        console.log('[CLEAR ALL] Final queue clear completed');
+      }, 500);
+      
+      // Reset audio/video playback state
+      setCurrentlyPlayingLanguage(null);
+      setSharedAudioPosition(0);
+      setSharedVideoPosition(0);
       
       // Reset connection state
       setIsConnected(false);
       setConnectedSTTCount(0);
+      setIsInitialConnection(true);
       
-      console.log('[ONE SHOT MODE] All WebSocket activity cleared');
-    } else {
-      // Switching back to Live Mode - clear One Shot results
-      console.log('[LIVE MODE] Clearing One Shot results...');
-      setOneShotResults([]);
-      setOneShotProgress({ completed: 0, total: 0 });
-      clearAllQueues();
+      // Generate new session ID to prevent any cross-contamination
+      setCurrentSessionId(Date.now().toString());
       
-      console.log('[LIVE MODE] One Shot results cleared');
+      console.log('[CLEAR ALL] Comprehensive cleanup completed - all history and processes stopped');
+      
+    } catch (error) {
+      console.error('[CLEAR ALL] Error during cleanup:', error);
     }
+  };
+
+  // Clear activity when switching between One Shot and Live Mode
+  useEffect(() => {
+    console.log(`[MODE SWITCH] Switching to ${isOneShotMode ? 'ONE SHOT' : 'LIVE'} mode - triggering comprehensive cleanup`);
+    
+    // Use the comprehensive cleanup function for mode switching
+    clearAllHistoryAndStopProcesses().then(() => {
+      if (isOneShotMode) {
+        console.log('[ONE SHOT MODE] Comprehensive cleanup completed, now in One Shot mode');
+      } else {
+        console.log('[LIVE MODE] Comprehensive cleanup completed, now in Live mode');
+        setIsInitialConnection(true); // Show connection overlay for Live Mode
+      }
+    });
   }, [isOneShotMode]);
 
   // WebSocket connection and queue management (only for Live Mode)
@@ -970,20 +1042,24 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
           return;
         }
 
-        // Add to global language queue
-        const audioChunk: AudioChunk = {
-          id: `${languageCode}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
-          audio_data: data.audio_data || '',
-          translated_text: data.translated_text || '',
-          original_text: data.original_text || '',
-          timestamp: Date.now(),
-          latency: data.latency || 0,
-          is_final: data.is_final || false,
-          confidence: data.confidence
-        };
+        // Only add to queue if chunk has audio_data
+        if (data.audio_data && data.audio_data.trim() !== '') {
+          const audioChunk: AudioChunk = {
+            id: `${currentSessionId}-${languageCode}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+            audio_data: data.audio_data,
+            translated_text: data.translated_text || '',
+            original_text: data.original_text || '',
+            timestamp: Date.now(),
+            latency: data.latency || 0,
+            is_final: data.is_final || false,
+            confidence: data.confidence
+          };
 
-        // Add to global queue (will be stored even without audio_data for text display)
-        addChunkToQueue(languageCode, audioChunk);
+          addChunkToQueue(languageCode, audioChunk);
+          console.log(`[${languageCode.toUpperCase()}] Added chunk WITH AUDIO: "${data.translated_text?.substring(0, 30)}..."`);
+        } else {
+          console.log(`[${languageCode.toUpperCase()}] Skipped chunk - no audio: "${data.translated_text?.substring(0, 30)}..."`);
+        }
 
         // Only stop waiting for chunks when we have all 13 STT connections AND meaningful data
         if (isWaitingForAudioChunks && (data.translated_text || data.original_text)) {
@@ -996,35 +1072,58 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
           }
         }
 
-        // Also add to session service for advanced mapping
-        sessionService.addTranscriptChunk(languageCode, {
-          original_text: data.original_text || '',
-          translated_text: data.translated_text || '',
-          latency: data.latency || 0,
-          is_final: data.is_final || false,
-          confidence: data.confidence
-        });
+        // Also add to session service for advanced mapping (only in Live Mode)
+        if (!isOneShotMode) {
+          // Ensure session exists before adding transcript
+          const activeSession = sessionService.getActiveSession(languageCode);
+          if (!activeSession) {
+            console.log(`[SESSION] Creating missing session for ${languageCode}`);
+            const lang = LANGUAGES.find((l: Language) => l.code === languageCode);
+            sessionService.createSession(languageCode, lang?.name || languageCode);
+          }
+          
+          sessionService.addTranscriptChunk(languageCode, {
+            original_text: data.original_text || '',
+            translated_text: data.translated_text || '',
+            latency: data.latency || 0,
+            is_final: data.is_final || false,
+            confidence: data.confidence
+          });
+        }
 
-        if (data.audio_data && data.audio_data.trim() !== '') {
+        if (!isOneShotMode && data.audio_data && data.audio_data.trim() !== '') {
+          // Ensure session exists before adding audio
+          const activeSession = sessionService.getActiveSession(languageCode);
+          if (!activeSession) {
+            console.log(`[SESSION] Creating missing session for audio in ${languageCode}`);
+            const lang = LANGUAGES.find((l: Language) => l.code === languageCode);
+            sessionService.createSession(languageCode, lang?.name || languageCode);
+          }
+          
           sessionService.addAudioChunk(languageCode, data.audio_data);
           console.log(`[${languageCode.toUpperCase()}] Added AUDIO + TRANSCRIPT to global ${languageCode.toUpperCase()}Queue`);
-        } else {
+        } else if (!isOneShotMode) {
           console.log(`[${languageCode.toUpperCase()}] Added TRANSCRIPT-ONLY to global ${languageCode.toUpperCase()}Queue (TTS failed)`);
         }
 
-        // Also add to legacy queue for STT Monitor display
-        const sttData = {
-          id: `${languageCode}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-          timestamp: Date.now(),
-          original_text: data.original_text || '',
-          translated_text: data.translated_text || '',
-          latency: data.latency || 0,
-          is_final: data.is_final || false,
-          audio_data: data.audio_data && data.audio_data.trim() !== '' ? data.audio_data : undefined,
-          confidence: data.confidence
-        };
+        // Also add to legacy queue for STT Monitor display (only with audio)
+        if (data.audio_data && data.audio_data.trim() !== '') {
+          const sttData = {
+            id: `${languageCode}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            timestamp: Date.now(),
+            original_text: data.original_text || '',
+            translated_text: data.translated_text || '',
+            latency: data.latency || 0,
+            is_final: data.is_final || false,
+            audio_data: data.audio_data,
+            confidence: data.confidence
+          };
 
-        queueService.addToQueue(languageCode, sttData);
+          queueService.addToQueue(languageCode, sttData);
+          console.log(`[STT QUEUE] Added ${languageCode} data WITH AUDIO to STTQueueService`);
+        } else {
+          console.log(`[STT QUEUE] Skipped ${languageCode} data - no audio for STTQueueService`);
+        }
 
         // If this is a final transcript, update translation results
         if (data.is_final && isTranslating) {
@@ -1033,12 +1132,8 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       }
     });
 
-    // Auto-connect on app load (optional - graceful failure if STT server not available)
-    wsService.connectAll(selectedLanguage.code).catch(error => {
-      console.warn('STT WebSocket server not available - continuing in API-only mode:', error);
-      setIsConnected(false);
-      setConnectedSTTCount(0);
-    });
+    // DON'T auto-connect on app load - only connect when user hits translate
+    console.log('[INIT] WebSocket handlers set up, but NOT connecting automatically');
 
     // Cleanup on unmount
     return () => {
@@ -1047,17 +1142,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     };
   }, []);
 
-  // Reconnect WebSockets when selected language changes
+  // DON'T automatically reconnect WebSockets when language changes
+  // Connections will be established when user hits translate
   useEffect(() => {
-    const wsService = WebSocketService.getInstance();
-
-    // Only reconnect if we have events set up (after initial load)
-    if (connectedSTTCount > 0 || isConnected) {
-      console.log(`Language changed to ${selectedLanguage.name}, reconnecting STT WebSockets...`);
-      wsService.connectAll(selectedLanguage.code).catch(error => {
-        console.warn('Failed to reconnect STT WebSockets after language change:', error);
-      });
-    }
+    console.log(`Language changed to ${selectedLanguage.name} - will connect when translate is pressed`);
   }, [selectedLanguage.code]);
 
   const value: AppContextType = {
@@ -1142,6 +1230,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     translateText,
     processAudioFile,
     processVideoFile,
+    clearAllHistoryAndStopProcesses,
     
     // One Shot Mode state
     oneShotResults,

@@ -262,7 +262,7 @@ export class WebSocketService {
 
   private updateConnectionStatus() {
     const connectedCount = this.getConnectedCount();
-    const totalCount = this.connections.length; // Use actual connection count instead of fixed 12
+    const totalCount = this.allLanguages.length; // Use target language count (13)
     this.events?.onConnectionStatusChange(connectedCount, totalCount);
   }
 

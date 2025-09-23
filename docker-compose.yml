@@ -24,6 +24,22 @@ services:
       retries: 3
       start_period: 60s
 
+  wavex-ui:
+    build: ./wavex
+    ports:
+      - "3000:3000"
+    networks:
+      - voice-translation-network
+    restart: unless-stopped
+    depends_on:
+      - voice-translation
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
 networks:
   voice-translation-network:
     driver: bridge

@@ -37,25 +37,33 @@ interface LanguageTranscriptProps {
   data?: TranslationData;
   isLoading?: boolean;
   queue?: LanguageQueue;
-  isGloballyPlaying?: boolean;
-  sharedAudioPosition?: number;
   videoFile?: File;
   audioFile?: File;
+  isGloballyPlaying?: boolean;
+  onTogglePlay?: () => void;
 }
 
 const LanguageTranscript: React.FC<LanguageTranscriptProps> = ({
   data,
   isLoading = false,
   queue,
-  isGloballyPlaying = false,
   videoFile,
-  audioFile
+  audioFile,
+  isGloballyPlaying,
+  onTogglePlay
 }) => {
     const [isLocalAudioPlaying, setIsLocalAudioPlaying] = useState(false);
     const [audioSrc, setAudioSrc] = useState<string>('');
     const [isVideoPlaying, setIsVideoPlaying] = useState(false);
     const audioSrcRef = React.useRef<string>('');
     const lastProcessedChunksCount = React.useRef<number>(0);
+    
+    // Audio queue system for live mode
+    const [allAudioChunks, setAllAudioChunks] = useState<{ audioData: string; text: string; id: string }[]>([]);
+    const [currentQueueIndex, setCurrentQueueIndex] = useState(0);
+    const [isPlayingQueue, setIsPlayingQueue] = useState(false);
+    const currentAudioRef = React.useRef<HTMLAudioElement | null>(null);
+    
     const { currentlyPlayingVideo, setCurrentlyPlayingVideo, isOneShotMode, currentlyPlayingLanguage, setCurrentlyPlayingLanguage, sharedAudioPosition, setSharedAudioPosition, sharedVideoPosition, setSharedVideoPosition } = useAppContext();
     
     // Use queue data if available, otherwise use legacy data prop
@@ -67,7 +75,6 @@ const LanguageTranscript: React.FC<LanguageTranscriptProps> = ({
     }, [videoFile]);
     
     const videoId = `${displayName}-video-${videoFile?.name}-${videoFile?.lastModified}`;
-    const audioId = `${displayName}-audio`;
     const languageCode = queue?.languageCode || data?.language.code || 'unknown';
     const nativeName = queue?.nativeName || data?.language.nativeName || '';
     const queueChunks = queue?.chunks || [];
@@ -79,6 +86,204 @@ const LanguageTranscript: React.FC<LanguageTranscriptProps> = ({
     const [isWaitingForChunk, setIsWaitingForChunk] = React.useState(false);
     const [videoSyncPosition, setVideoSyncPosition] = React.useState(0);
     const videoRef = React.useRef<HTMLVideoElement | null>(null);
+
+    // Queue audio chunk for sequential playback (like HTML file)
+    const queueAudioChunk = React.useCallback((audioData: string, text: string, id: string) => {
+        console.log(`[${displayName}] Queuing audio chunk: "${text.substring(0, 30)}..."`);
+        const newChunk = { audioData, text, id };
+        
+        // Add to permanent collection (for replay)
+        setAllAudioChunks(prev => {
+            if (prev.some(item => item.id === id)) {
+                return prev;
+            }
+            return [...prev, newChunk];
+        });
+        
+        // Added to permanent collection only (for replay)
+    }, [displayName]);
+
+    // Play audio chunk at current index
+    const playNextInQueue = React.useCallback(async () => {
+        if (currentQueueIndex >= allAudioChunks.length) {
+            setIsPlayingQueue(false);
+            console.log(`[${displayName}] Reached end of audio chunks`);
+            return;
+        }
+
+        const { audioData, text, id } = allAudioChunks[currentQueueIndex];
+        setIsPlayingQueue(true);
+
+        try {
+            console.log(`[${displayName}] Playing chunk ${currentQueueIndex + 1}/${allAudioChunks.length}: "${text.substring(0, 30)}..."`);
+            
+            // Convert base64 to blob
+            const binaryString = atob(audioData);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            
+            const blob = new Blob([bytes], { type: 'audio/mpeg' });
+            const audioUrl = URL.createObjectURL(blob);
+            const audio = new Audio(audioUrl);
+            currentAudioRef.current = audio;
+            
+            audio.addEventListener('ended', () => {
+                URL.revokeObjectURL(audioUrl);
+                console.log(`[${displayName}] Finished playing chunk ${currentQueueIndex + 1}`);
+                
+                // Move to next chunk
+                setCurrentQueueIndex(prev => prev + 1);
+            });
+            
+            // Set up loadeddata event to restore shared position
+            audio.addEventListener('loadeddata', () => {
+                if (sharedAudioPosition > 0 && currentlyPlayingLanguage === languageCode) {
+                    audio.currentTime = sharedAudioPosition;
+                    console.log(`[${displayName}] Restored queue audio position to ${sharedAudioPosition.toFixed(2)}s`);
+                }
+            });
+            
+            audio.addEventListener('error', (error) => {
+                URL.revokeObjectURL(audioUrl);
+                console.error(`[${displayName}] Audio error for chunk ${currentQueueIndex + 1}:`, error);
+                
+                // Move to next chunk even on error
+                setCurrentQueueIndex(prev => prev + 1);
+            });
+            
+            await audio.play();
+            console.log(`[${displayName}] Started playing chunk ${currentQueueIndex + 1}`);
+            
+        } catch (error) {
+            console.error(`[${displayName}] Error playing chunk ${currentQueueIndex + 1}:`, error);
+            // Move to next chunk even on error
+            setCurrentQueueIndex(prev => prev + 1);
+        }
+    }, [currentQueueIndex, allAudioChunks, displayName]);
+
+    // Play first chunk directly (for button clicks)
+    const playFirstChunk = React.useCallback(async () => {
+        if (allAudioChunks.length === 0) {
+            setIsPlayingQueue(false);
+            console.log(`[${displayName}] No audio chunks to play`);
+            return;
+        }
+
+        const { audioData, text, id } = allAudioChunks[0];
+        setCurrentQueueIndex(0);
+        setIsPlayingQueue(true);
+
+        try {
+            console.log(`[${displayName}] Playing first chunk: "${text.substring(0, 30)}..."`);
+            
+            // Convert base64 to blob
+            const binaryString = atob(audioData);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            
+            const blob = new Blob([bytes], { type: 'audio/mpeg' });
+            const audioUrl = URL.createObjectURL(blob);
+            const audio = new Audio(audioUrl);
+            currentAudioRef.current = audio;
+            
+            audio.addEventListener('ended', () => {
+                URL.revokeObjectURL(audioUrl);
+                console.log(`[${displayName}] Finished playing first chunk`);
+                setCurrentQueueIndex(1); // This will trigger useEffect to continue
+            });
+            
+            // Set up loadeddata event to restore shared position
+            audio.addEventListener('loadeddata', () => {
+                if (sharedAudioPosition > 0 && currentlyPlayingLanguage === languageCode) {
+                    audio.currentTime = sharedAudioPosition;
+                    console.log(`[${displayName}] Restored queue audio position to ${sharedAudioPosition.toFixed(2)}s`);
+                }
+            });
+            
+            audio.addEventListener('error', (error) => {
+                URL.revokeObjectURL(audioUrl);
+                console.error(`[${displayName}] Audio error for first chunk:`, error);
+                setCurrentQueueIndex(1); // Continue even on error
+            });
+            
+            await audio.play();
+            console.log(`[${displayName}] Started playing first chunk`);
+            
+        } catch (error) {
+            console.error(`[${displayName}] Error playing first chunk:`, error);
+            setCurrentQueueIndex(1);
+        }
+    }, [allAudioChunks, displayName]);
+
+    // Auto-continue to next chunk when index changes during playback  
+    const isInitialPlayRef = React.useRef(false);
+    
+    React.useEffect(() => {
+        // Skip if this is the initial play trigger
+        if (!isInitialPlayRef.current && isPlayingQueue) {
+            isInitialPlayRef.current = true;
+            return;
+        }
+        
+        if (isPlayingQueue && currentQueueIndex < allAudioChunks.length && isInitialPlayRef.current) {
+            // Continue playing next chunk
+            console.log(`[${displayName}] Auto-continuing to chunk ${currentQueueIndex + 1}`);
+            setTimeout(() => playNextInQueue(), 100);
+        } else if (isPlayingQueue && currentQueueIndex >= allAudioChunks.length) {
+            // Reached end - stop playing
+            setIsPlayingQueue(false);
+            isInitialPlayRef.current = false;
+            console.log(`[${displayName}] Playback complete - ready for replay`);
+            
+            // Reset shared position when playback completes
+            setSharedAudioPosition(0);
+            
+            // Clear global playing state if this was the playing language
+            if (currentlyPlayingLanguage === languageCode) {
+                setCurrentlyPlayingLanguage(null);
+            }
+        }
+        
+        if (!isPlayingQueue) {
+            isInitialPlayRef.current = false;
+        }
+    }, [currentQueueIndex, isPlayingQueue, allAudioChunks.length, playNextInQueue, displayName, currentlyPlayingLanguage, languageCode, setCurrentlyPlayingLanguage]);
+
+    // Effect to pause this queue playback when another language starts playing
+    React.useEffect(() => {
+        if (currentlyPlayingLanguage && currentlyPlayingLanguage !== languageCode && isPlayingQueue) {
+            console.log(`[${displayName}] Another language (${currentlyPlayingLanguage}) started playing - stopping queue playback`);
+            
+            // Save current position before pausing
+            if (currentAudioRef.current) {
+                const currentTime = currentAudioRef.current.currentTime;
+                setSharedAudioPosition(currentTime);
+                console.log(`[${displayName}] Saved queue audio position: ${currentTime.toFixed(2)}s`);
+                currentAudioRef.current.pause();
+            }
+            setIsPlayingQueue(false);
+            // Don't reset queue index - keep current position for resume
+        }
+    }, [currentlyPlayingLanguage, languageCode, isPlayingQueue, displayName, setSharedAudioPosition]);
+
+    // Manual playback control - no auto-play on new chunks
+    // Audio queue will only play when user clicks the play button
+
+    // Clear audio queue and stop current playback
+    const clearAudioQueue = React.useCallback(() => {
+        console.log(`[${displayName}] Clearing audio queue`);
+        if (currentAudioRef.current) {
+            currentAudioRef.current.pause();
+            currentAudioRef.current = null;
+        }
+        setAllAudioChunks([]);
+        setCurrentQueueIndex(0);
+        setIsPlayingQueue(false);
+    }, [displayName]);
 
     // Generate audio source only when chunks change, not on every render
     React.useEffect(() => {
@@ -96,9 +301,22 @@ const LanguageTranscript: React.FC<LanguageTranscriptProps> = ({
             if (audioChunks.length > 0) {
                 console.log(`[${displayName}] 🎵 STARTING audio processing with ${audioChunks.length} chunks`);
                 
-                // In live mode, only update audio if significantly more chunks or first time
-                if (!isOneShotMode && audioSrc && audioChunks.length <= lastProcessedChunksCount.current + 2) {
-                    console.log(`[${displayName}] Live mode: skipping audio regeneration (${audioChunks.length} vs ${lastProcessedChunksCount.current})`);
+                // Live mode: Use concatenated audio for position sharing, but also queue chunks for display
+                if (!isOneShotMode && audioFile) {
+                    // Queue new chunks for display
+                    const newChunks = audioChunks.slice(lastProcessedChunksCount.current);
+                    newChunks.forEach(chunk => {
+                        queueAudioChunk(chunk.audio_data, chunk.translated_text, chunk.id);
+                    });
+                    
+                    // Also create concatenated audio for position sharing (like one-shot mode)
+                    // This allows precise time-based resume functionality
+                    // Continue with concatenation below...
+                }
+                
+                // One Shot mode: Continue with concatenation for full audio playback
+                if (isOneShotMode && audioSrc && audioChunks.length <= lastProcessedChunksCount.current + 2) {
+                    console.log(`[${displayName}] One Shot mode: skipping audio regeneration (${audioChunks.length} vs ${lastProcessedChunksCount.current})`);
                     return;
                 }
                 
@@ -251,6 +469,10 @@ const LanguageTranscript: React.FC<LanguageTranscriptProps> = ({
             // Use refs to get current values at cleanup time
             if (audioSrcRef.current) {
                 URL.revokeObjectURL(audioSrcRef.current);
+            }
+            // Clear audio queue and stop playback
+            if (currentAudioRef.current) {
+                currentAudioRef.current.pause();
             }
             // videoSrc will be cleaned up automatically by useMemo
         };
@@ -469,13 +691,12 @@ const LanguageTranscript: React.FC<LanguageTranscriptProps> = ({
                                     <audio
                                         className="hidden"
                                         src={audioSrc}
-                                        volume={1.0}
                                         muted={false}
                                         onLoadStart={() => console.log(`${displayName} translated audio: load started`)}
                                         onCanPlay={() => console.log(`${displayName} translated audio: can play`)}
                                         onLoadedData={() => console.log(`${displayName} translated audio: data loaded`)}
-                                        onError={(e) => {
-                                            console.error(`${displayName} translated audio error:`, e);
+                                        onError={() => {
+                                            console.error(`${displayName} translated audio error`);
                                         }}
                                         onPlay={() => console.log(`${displayName} translated audio: PLAYING NOW`)}
                                         onPause={() => console.log(`${displayName} translated audio: PAUSED`)}
@@ -485,6 +706,7 @@ const LanguageTranscript: React.FC<LanguageTranscriptProps> = ({
                                         }}
                                         ref={(audio) => {
                                             if (audio) {
+                                                audio.volume = 1.0;
                                                 console.log(`${displayName} audio element created:`, {
                                                     src: audio.src?.substring(0, 50),
                                                     volume: audio.volume,
@@ -729,8 +951,8 @@ const LanguageTranscript: React.FC<LanguageTranscriptProps> = ({
                                             
                                             console.log(`${displayName} audio ended - reset position and cleared playing state`);
                                         }}
-                                        onError={(e) => {
-                                            console.error(`${displayName} audio error:`, e);
+                                        onError={() => {
+                                            console.error(`${displayName} audio error`);
                                             setIsLocalAudioPlaying(false);
                                             
                                             // Clear global playing state if this was the playing language
@@ -776,15 +998,28 @@ const LanguageTranscript: React.FC<LanguageTranscriptProps> = ({
                                 {/* Play/Pause Button - Different behavior for Live vs One Shot */}
                                 <button 
                                     className={`w-8 h-8 rounded flex items-center justify-center transition-colors flex-shrink-0 ${
-                                        // One Shot: disabled until all chunks, Live: enabled when any chunks
-                                        (!audioSrc || (isOneShotMode && queueChunks.length === 0))
+                                        (!audioSrc || queueChunks.length === 0)
                                             ? 'bg-gray-400 cursor-not-allowed' 
                                             : isLocalAudioPlaying ? 'bg-red-500 hover:bg-red-600' : 'bg-[#3840EB] hover:bg-blue-600'
                                     }`}
-                                    disabled={!audioSrc || (isOneShotMode && queueChunks.length === 0)}
+                                    disabled={!audioSrc || queueChunks.length === 0}
                                     onClick={async (e) => {
                                         e.preventDefault();
-                                        if (!audioSrc || (isOneShotMode && queueChunks.length === 0)) {
+                                        
+                                        // Live mode: Use regular audio element (like one-shot) for position sharing
+                                        if (!isOneShotMode) {
+                                            // In live mode, if we have audioSrc (concatenated), use regular audio control
+                                            if (audioSrc) {
+                                                // Use the same logic as one-shot mode below
+                                                console.log(`[${displayName}] Live mode: using concatenated audio for position sharing`);
+                                            } else {
+                                                console.log(`[${displayName}] Live mode: no concatenated audio available yet`);
+                                                return;
+                                            }
+                                        }
+                                        
+                                        // Both Live and One Shot mode: Use concatenated audio
+                                        if (!audioSrc || queueChunks.length === 0) {
                                             console.log('Audio not ready for playback');
                                             return;
                                         }
@@ -882,7 +1117,7 @@ const LanguageTranscript: React.FC<LanguageTranscriptProps> = ({
                                             // Remove duplicates based on translated_text
                                             return array.findIndex(c => c.translated_text === chunk.translated_text) === index;
                                         })
-                                        .slice().reverse().map((chunk, reverseIndex) => {
+                                        .slice().reverse().map((chunk) => {
                                             // Find original position in filtered array for stable numbering
                                             const filteredChunks = queueChunks.filter((c, i, arr) => 
                                                 arr.findIndex(cc => cc.translated_text === c.translated_text) === i
@@ -905,11 +1140,6 @@ const LanguageTranscript: React.FC<LanguageTranscriptProps> = ({
                                                     <span className="text-xs font-medium text-blue-600">
                                                       Chunk {chunkNumber}
                                                     </span>
-                                                    {chunk.audio_data && (
-                                                        <span className="text-xs bg-green-100 text-green-600 px-1 rounded" title="Has TTS audio">
-                                                          🔊
-                                                        </span>
-                                                    )}
                                                 </div>
                                                 <span className="text-xs text-gray-400">
                                                     {new Date(chunk.timestamp).toLocaleTimeString()}

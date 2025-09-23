@@ -18,17 +18,10 @@ const SkipConnectionButton = () => {
 };
 
 const ConnectionOverlay = () => {
-  const { isConnected, connectedSTTCount, totalSTTCount, isTranslating, isInitialConnection } = useAppContext();
+  const { isConnected, connectedSTTCount, totalSTTCount, isTranslating, isInitialConnection, isOneShotMode } = useAppContext();
 
-  // Don't show overlay if fully connected
-  if (isConnected) {
-    return null;
-  }
-
-  // Don't show overlay during audio processing/reconnection - let translate button handle the UI
-  if (isTranslating || !isInitialConnection) {
-    return null;
-  }
+  // Hide overlay completely
+  return null;
 
   const connectionProgress = totalSTTCount > 0 ? (connectedSTTCount / totalSTTCount) * 100 : 0;
 

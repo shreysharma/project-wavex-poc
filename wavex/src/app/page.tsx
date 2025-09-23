@@ -54,7 +54,8 @@ export default function Home() {
     connectedSTTCount,
     totalSTTCount,
     oneShotProgress,
-    isWaitingForAudioChunks
+    isWaitingForAudioChunks,
+    clearAllHistoryAndStopProcesses
   } = useAppContext();
   const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -109,6 +110,15 @@ export default function Home() {
     }, 10);
   };
 
+  const handleKeyDown = async (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Handle Escape key or Ctrl+C to cancel when files are selected
+    if ((e.key === 'Escape' || (e.ctrlKey && e.key === 'c')) && (selectedAudioFile || selectedVideoFile)) {
+      e.preventDefault();
+      console.log('[CANCEL] File cancellation triggered by keyboard shortcut');
+      await clearAllHistoryAndStopProcesses();
+    }
+  };
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Node;
@@ -134,6 +144,27 @@ export default function Home() {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [isPopupOpen, setIsPopupOpen]);
+
+  // Global keyboard event listener for file cancellation
+  useEffect(() => {
+    const handleGlobalKeyDown = async (event: KeyboardEvent) => {
+      // Handle Escape key or Ctrl+C to cancel when files are selected
+      if ((event.key === 'Escape' || (event.ctrlKey && event.key === 'c')) && (selectedAudioFile || selectedVideoFile)) {
+        event.preventDefault();
+        console.log('[CANCEL] File cancellation triggered by global keyboard shortcut');
+        await clearAllHistoryAndStopProcesses();
+      }
+    };
+
+    // Only add listener when files are selected
+    if (selectedAudioFile || selectedVideoFile) {
+      document.addEventListener('keydown', handleGlobalKeyDown);
+    }
+
+    return () => {
+      document.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  }, [selectedAudioFile, selectedVideoFile, clearAllHistoryAndStopProcesses]);
 
   const PopupContent = () => {
     console.log('PopupContent is rendering at position:', popupPosition);
@@ -217,15 +248,8 @@ export default function Home() {
             <AudioPlayer
               file={selectedAudioFile}
               onRemove={async () => {
-                setSelectedAudioFile(null);
-                // Stop all processing and clear results
-                setIsTranslating(false);
-                setIsWaitingForAudioChunks(false);
-                setTranslationResults([]);
-                setOneShotResults([]);
-                setOneShotProgress({ completed: 0, total: 0 });
-                // Restart audio session when removing audio file
-                await restartAudioSession();
+                console.log('[REMOVE AUDIO] Clearing all history and stopping processes');
+                await clearAllHistoryAndStopProcesses();
               }}
               className="flex-shrink-0 animate-in fade-in-0 slide-in-from-left-4 duration-300"
             />
@@ -236,15 +260,8 @@ export default function Home() {
             <VideoPlayer
               file={selectedVideoFile}
               onRemove={async () => {
-                setSelectedVideoFile(null);
-                // Stop all processing and clear results
-                setIsTranslating(false);
-                setIsWaitingForAudioChunks(false);
-                setTranslationResults([]);
-                setOneShotResults([]);
-                setOneShotProgress({ completed: 0, total: 0 });
-                // Restart audio session when removing video file
-                await restartAudioSession();
+                console.log('[REMOVE VIDEO] Clearing all history and stopping processes');
+                await clearAllHistoryAndStopProcesses();
               }}
               className="flex-shrink-0 animate-in fade-in-0 slide-in-from-left-4 duration-300"
             />
@@ -259,6 +276,7 @@ export default function Home() {
             value={inputText}
             onChange={handleInputChange}
             onPaste={handlePaste}
+            onKeyDown={handleKeyDown}
             disabled={!!(selectedVideoFile || selectedAudioFile)}
             className={`bg-transparent rounded-lg resize-none flex-1 ${selectedVideoFile || selectedAudioFile ? 'min-h-[calc(15vh-8px)] opacity-50 cursor-not-allowed' : 'min-h-[calc(8vh-8px)]'} focus:outline-none overflow-y-auto`}
             style={{ 
@@ -277,34 +295,34 @@ export default function Home() {
             disabled={
               isTranslating || 
               isWaitingForAudioChunks || 
-              (!inputText.trim() && !selectedAudioFile && !selectedVideoFile) ||
-              (!isOneShotMode && (selectedAudioFile || selectedVideoFile) && !isConnected)
+              (!inputText.trim() && !selectedAudioFile && !selectedVideoFile)
             }
             className={`
               px-6 py-2 rounded-[10px] font-semibold flex-shrink-0 h-fit
               transition-all duration-300 ease-in-out transform
               ${isTranslating || 
                 isWaitingForAudioChunks || 
-                (!inputText.trim() && !selectedAudioFile && !selectedVideoFile) ||
-                (!isOneShotMode && (selectedAudioFile || selectedVideoFile) && !isConnected)
+                (!inputText.trim() && !selectedAudioFile && !selectedVideoFile)
                 ? 'bg-gray-400 cursor-not-allowed scale-95'
                 : 'bg-[#3840EB] hover:bg-[#3840EB] hover:scale-105 active:scale-95'
               } text-white
             `}
           >
-            <div className={`flex items-center gap-2 transition-all duration-200 ${isTranslating || isWaitingForAudioChunks || (!isOneShotMode && (selectedAudioFile || selectedVideoFile) && !isConnected) ? 'animate-pulse' : ''}`}>
-              {(isTranslating || isWaitingForAudioChunks || (!isOneShotMode && (selectedAudioFile || selectedVideoFile) && !isConnected)) && (
+            <div className={`flex items-center gap-2 transition-all duration-200 ${isTranslating || isWaitingForAudioChunks ? 'animate-pulse' : ''}`}>
+              {(isTranslating || isWaitingForAudioChunks) && (
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
               )}
               {isOneShotMode && isTranslating && oneShotProgress.total > 0
                 ? `Processing ${oneShotProgress.completed}/${oneShotProgress.total}${oneShotProgress.currentLanguage ? ` (${oneShotProgress.currentLanguage})` : ''}...`
-                : !isOneShotMode && (selectedAudioFile || selectedVideoFile) && !isConnected
-                  ? `Connecting ${connectedSTTCount}/${totalSTTCount}...`
+                : !isOneShotMode && (selectedAudioFile || selectedVideoFile) && isTranslating
+                  ? connectedSTTCount === totalSTTCount && connectedSTTCount === 13
+                    ? isWaitingForAudioChunks 
+                      ? 'Processing...' 
+                      : 'Processing 13/13...'
+                    : `Connecting ${connectedSTTCount}/${totalSTTCount}...`
                   : isWaitingForAudioChunks 
                     ? 'Processing...' 
-                    : isTranslating && (selectedAudioFile || selectedVideoFile)
-                      ? 'Connecting...'
-                      : 'Translate'
+                    : 'Translate'
               }
             </div>
           </button>

@@ -41,7 +41,7 @@ const Navbar = () => {
             ? `STT: Connected (${connectedSTTCount}/${totalSTTCount})`
             : connectedSTTCount > 0
             ? `STT: Connecting (${connectedSTTCount}/${totalSTTCount})`
-            : 'STT: API Mode'
+            : `STT: Connected (${connectedSTTCount})`
           }
         </div>
       </div>
