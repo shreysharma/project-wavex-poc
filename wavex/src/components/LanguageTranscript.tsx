@@ -313,14 +313,16 @@ const LanguageTranscript: React.FC<LanguageTranscriptProps> = ({
                         )}
                     </div>
 
-                    {/* Chunk Counter */}
-                    {queue && (
+                    {/* Chunk Counter - Only show in Live Mode */}
+                    {queue && !isOneShotMode && (
                         <div className="flex items-center gap-2">
                             <span className={`
                               px-2 py-1 rounded text-xs font-medium
                               ${queueChunks.length > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}
                             `}>
-                              {queueChunks.length} chunks
+                              {queueChunks.filter((chunk, index, array) => 
+                                array.findIndex(c => c.translated_text === chunk.translated_text) === index
+                              ).length} chunks
                             </span>
                         </div>
                     )}
@@ -903,13 +905,9 @@ const LanguageTranscript: React.FC<LanguageTranscriptProps> = ({
                                                     <span className="text-xs font-medium text-blue-600">
                                                       Chunk {chunkNumber}
                                                     </span>
-                                                    {chunk.audio_data ? (
+                                                    {chunk.audio_data && (
                                                         <span className="text-xs bg-green-100 text-green-600 px-1 rounded" title="Has TTS audio">
                                                           🔊
-                                                        </span>
-                                                    ) : (
-                                                        <span className="text-xs bg-red-100 text-red-600 px-1 rounded" title="No TTS audio">
-                                                          🔇
                                                         </span>
                                                     )}
                                                 </div>

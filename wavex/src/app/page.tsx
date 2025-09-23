@@ -49,7 +49,12 @@ export default function Home() {
     setIsWaitingForAudioChunks,
     setTranslationResults,
     setOneShotResults,
-    setOneShotProgress
+    setOneShotProgress,
+    isConnected,
+    connectedSTTCount,
+    totalSTTCount,
+    oneShotProgress,
+    isWaitingForAudioChunks
   } = useAppContext();
   const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -269,21 +274,38 @@ export default function Home() {
           <button
             id="translateBtn"
             onClick={handleTranslate}
-            disabled={isTranslating || (!inputText.trim() && !selectedAudioFile && !selectedVideoFile)}
+            disabled={
+              isTranslating || 
+              isWaitingForAudioChunks || 
+              (!inputText.trim() && !selectedAudioFile && !selectedVideoFile) ||
+              (!isOneShotMode && (selectedAudioFile || selectedVideoFile) && !isConnected)
+            }
             className={`
               px-6 py-2 rounded-[10px] font-semibold flex-shrink-0 h-fit
               transition-all duration-300 ease-in-out transform
-              ${isTranslating || (!inputText.trim() && !selectedAudioFile && !selectedVideoFile)
+              ${isTranslating || 
+                isWaitingForAudioChunks || 
+                (!inputText.trim() && !selectedAudioFile && !selectedVideoFile) ||
+                (!isOneShotMode && (selectedAudioFile || selectedVideoFile) && !isConnected)
                 ? 'bg-gray-400 cursor-not-allowed scale-95'
                 : 'bg-[#3840EB] hover:bg-[#3840EB] hover:scale-105 active:scale-95'
               } text-white
             `}
           >
-            <div className={`flex items-center gap-2 transition-all duration-200 ${isTranslating ? 'animate-pulse' : ''}`}>
-              {isTranslating && (
+            <div className={`flex items-center gap-2 transition-all duration-200 ${isTranslating || isWaitingForAudioChunks || (!isOneShotMode && (selectedAudioFile || selectedVideoFile) && !isConnected) ? 'animate-pulse' : ''}`}>
+              {(isTranslating || isWaitingForAudioChunks || (!isOneShotMode && (selectedAudioFile || selectedVideoFile) && !isConnected)) && (
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
               )}
-             Translate
+              {isOneShotMode && isTranslating && oneShotProgress.total > 0
+                ? `Processing ${oneShotProgress.completed}/${oneShotProgress.total}${oneShotProgress.currentLanguage ? ` (${oneShotProgress.currentLanguage})` : ''}...`
+                : !isOneShotMode && (selectedAudioFile || selectedVideoFile) && !isConnected
+                  ? `Connecting ${connectedSTTCount}/${totalSTTCount}...`
+                  : isWaitingForAudioChunks 
+                    ? 'Processing...' 
+                    : isTranslating && (selectedAudioFile || selectedVideoFile)
+                      ? 'Connecting...'
+                      : 'Translate'
+              }
             </div>
           </button>
           </div>
@@ -349,16 +371,22 @@ export default function Home() {
         {/* Real-time Language Transcripts - Only show for audio/video processing */}
         {(selectedAudioFile || selectedVideoFile) && (
           <div className="mt-4">
-            {currentlyPlayingLanguage && (
-              <div className="mb-4 flex items-center gap-3">
-                <span className="text-sm text-green-600 font-medium bg-green-50 px-3 py-1 rounded-full">
-                  🔊 Playing: {currentlyPlayingLanguage.toUpperCase()}
-                </span>
-              </div>
-            )}
 
           <div className="flex flex-col gap-4">
-            {/* Hindi Queue */}
+            {/* English Queue - First */}
+            <LanguageTranscript
+              queue={englishQueue}
+              isGloballyPlaying={currentlyPlayingLanguage === 'en'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
+              onTogglePlay={() =>
+                currentlyPlayingLanguage === 'en'
+                  ? setCurrentlyPlayingLanguage(null)
+                  : setCurrentlyPlayingLanguage('en')
+              }
+            />
+
+            {/* Hindi Queue - Second */}
             <LanguageTranscript
               queue={hindiQueue}
               isGloballyPlaying={currentlyPlayingLanguage === 'hi'}
@@ -379,16 +407,42 @@ export default function Home() {
               }}
             />
 
-            {/* English Queue */}
+            {/* Punjabi Queue - Third */}
             <LanguageTranscript
-              queue={englishQueue}
-              isGloballyPlaying={currentlyPlayingLanguage === 'en'}
+              queue={punjabiQueue}
+              isGloballyPlaying={currentlyPlayingLanguage === 'pa'}
               videoFile={selectedVideoFile || undefined}
               audioFile={selectedAudioFile || undefined}
               onTogglePlay={() =>
-                currentlyPlayingLanguage === 'en'
+                currentlyPlayingLanguage === 'pa'
                   ? setCurrentlyPlayingLanguage(null)
-                  : setCurrentlyPlayingLanguage('en')
+                  : setCurrentlyPlayingLanguage('pa')
+              }
+            />
+
+            {/* Urdu Queue - Fourth */}
+            <LanguageTranscript
+              queue={urduQueue}
+              isGloballyPlaying={currentlyPlayingLanguage === 'ur'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
+              onTogglePlay={() =>
+                currentlyPlayingLanguage === 'ur'
+                  ? setCurrentlyPlayingLanguage(null)
+                  : setCurrentlyPlayingLanguage('ur')
+              }
+            />
+
+            {/* Marathi Queue - Fifth */}
+            <LanguageTranscript
+              queue={marathiQueue}
+              isGloballyPlaying={currentlyPlayingLanguage === 'mr'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
+              onTogglePlay={() =>
+                currentlyPlayingLanguage === 'mr'
+                  ? setCurrentlyPlayingLanguage(null)
+                  : setCurrentlyPlayingLanguage('mr')
               }
             />
 
@@ -431,19 +485,6 @@ export default function Home() {
               }
             />
 
-            {/* Marathi Queue */}
-            <LanguageTranscript
-              queue={marathiQueue}
-              isGloballyPlaying={currentlyPlayingLanguage === 'mr'}
-              videoFile={selectedVideoFile || undefined}
-              audioFile={selectedAudioFile || undefined}
-              onTogglePlay={() =>
-                currentlyPlayingLanguage === 'mr'
-                  ? setCurrentlyPlayingLanguage(null)
-                  : setCurrentlyPlayingLanguage('mr')
-              }
-            />
-
             {/* Gujarati Queue */}
             <LanguageTranscript
               queue={gujaratiQueue}
@@ -480,32 +521,6 @@ export default function Home() {
                 currentlyPlayingLanguage === 'ml'
                   ? setCurrentlyPlayingLanguage(null)
                   : setCurrentlyPlayingLanguage('ml')
-              }
-            />
-
-            {/* Punjabi Queue */}
-            <LanguageTranscript
-              queue={punjabiQueue}
-              isGloballyPlaying={currentlyPlayingLanguage === 'pa'}
-              videoFile={selectedVideoFile || undefined}
-              audioFile={selectedAudioFile || undefined}
-              onTogglePlay={() =>
-                currentlyPlayingLanguage === 'pa'
-                  ? setCurrentlyPlayingLanguage(null)
-                  : setCurrentlyPlayingLanguage('pa')
-              }
-            />
-
-            {/* Urdu Queue */}
-            <LanguageTranscript
-              queue={urduQueue}
-              isGloballyPlaying={currentlyPlayingLanguage === 'ur'}
-              videoFile={selectedVideoFile || undefined}
-              audioFile={selectedAudioFile || undefined}
-              onTogglePlay={() =>
-                currentlyPlayingLanguage === 'ur'
-                  ? setCurrentlyPlayingLanguage(null)
-                  : setCurrentlyPlayingLanguage('ur')
               }
             />
 

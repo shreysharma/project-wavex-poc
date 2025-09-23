@@ -488,7 +488,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         }));
         
         setOneShotResults(translationResults);
-        setTranslationResults(translationResults);
+        // Don't set translationResults in One Shot Mode - only use queue results
         
         // Also add to queues for display compatibility
         results.forEach(result => {
@@ -829,7 +829,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         }));
         
         setOneShotResults(translationResults);
-        setTranslationResults(translationResults);
+        // Don't set translationResults in One Shot Mode - only use queue results
         
         // Also add to queues for display compatibility
         results.forEach(result => {
@@ -882,7 +882,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     }
   };
 
-  // Clear WebSocket activity when One Shot Mode is enabled
+  // Clear activity when switching between One Shot and Live Mode
   useEffect(() => {
     if (isOneShotMode) {
       console.log('[ONE SHOT MODE] Clearing all WebSocket activity...');
@@ -903,6 +903,14 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       setConnectedSTTCount(0);
       
       console.log('[ONE SHOT MODE] All WebSocket activity cleared');
+    } else {
+      // Switching back to Live Mode - clear One Shot results
+      console.log('[LIVE MODE] Clearing One Shot results...');
+      setOneShotResults([]);
+      setOneShotProgress({ completed: 0, total: 0 });
+      clearAllQueues();
+      
+      console.log('[LIVE MODE] One Shot results cleared');
     }
   }, [isOneShotMode]);
 
