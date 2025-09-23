@@ -580,7 +580,7 @@
         }
         
         function connectWebSocket() {
-            const wsUrl = 'wss://wavex-poc-infra-dev-435169433869.us-central1.run.app/stt-test';
+            const wsUrl = 'ws://localhost:8000/stt-test';
             log(`Connecting to ${wsUrl}`);
 
             websocket = new WebSocket(wsUrl);

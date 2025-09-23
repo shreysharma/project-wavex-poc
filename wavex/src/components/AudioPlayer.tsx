@@ -61,12 +61,26 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ file, onRemove, className = '
   };
 
   return (
-    <div className={`bg-white rounded-lg px-3 border border-gray-300 flex items-center gap-3 ${className}`}>
+    <div className={`bg-white rounded-lg px-3 border border-gray-300 flex items-center gap-3 relative ${className}`}>
       <audio
         className="hidden"
         src={URL.createObjectURL(file)}
         onEnded={() => setIsPlaying(false)}
       />
+
+      {/* Remove Button - Top Right Corner */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center transition-colors duration-200 z-10"
+        title="Remove audio"
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
 
       {/* Waveform Canvas */}
       <canvas

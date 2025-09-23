@@ -5,6 +5,9 @@ interface STTConnection {
     name: string;
   };
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
+  reconnectAttempts: number;
+  lastConnectTime: number;
+  isReconnecting: boolean;
 }
 
 interface WebSocketServiceEvents {
@@ -16,8 +19,12 @@ export class WebSocketService {
   private static instance: WebSocketService;
   private connections: STTConnection[] = [];
   private events: WebSocketServiceEvents | null = null;
-  private reconnectAttempts = 0;
-  private maxReconnectAttempts = 3;
+  private maxReconnectAttempts = 10; // Increased from 5 to 10
+  private baseReconnectDelay = 1000; // 1 second
+  private maxReconnectDelay = 30000; // 30 seconds max
+  private currentInputLanguage = 'hi';
+  private isAutoReconnectEnabled = true;
+  private connectionHealthCheckInterval: NodeJS.Timeout | null = null;
 
   private readonly allLanguages = [
     { code: 'hi', name: 'Hindi' },
@@ -50,9 +57,15 @@ export class WebSocketService {
 
   async connectAll(inputLanguage: string): Promise<void> {
     console.log(`Starting STT WebSocket connections with input language: ${inputLanguage}`);
+    
+    this.currentInputLanguage = inputLanguage;
+    this.isAutoReconnectEnabled = true; // Enable auto-reconnect when connecting
 
     // Close existing connections
     this.disconnectAll();
+
+    // Start connection health check
+    this.startConnectionHealthCheck();
 
     // Get all languages (including input language for original transcription)
     const targetLanguages = this.allLanguages; // Include ALL 13 languages
@@ -79,7 +92,10 @@ export class WebSocketService {
       const connection: STTConnection = {
         ws,
         language,
-        status: 'connecting'
+        status: 'connecting',
+        reconnectAttempts: 0,
+        lastConnectTime: Date.now(),
+        isReconnecting: false
       };
 
       this.connections.push(connection);
@@ -122,19 +138,10 @@ export class WebSocketService {
           console.log(`STT WebSocket disconnected for ${language.name}:`, event.code, event.reason);
           this.updateConnectionStatus();
 
-          // Auto-reconnect for Deepgram timeout errors (1011) only if we have active audio processing
-          if (event.code === 1011) {
-            console.log(`[${language.name}] Deepgram timeout detected`);
-
-            // Only reconnect if we're actively processing audio
-            if (this.hasActiveAudioProcessing()) {
-              console.log(`[${language.name}] Active audio processing detected - auto-reconnecting in 2 seconds`);
-              setTimeout(() => {
-                this.reconnectLanguage(language, inputLanguage);
-              }, 2000);
-            } else {
-              console.log(`[${language.name}] No active audio processing - skipping reconnection`);
-            }
+          // Auto-reconnect for connection issues
+          if (this.shouldReconnect(event.code, connection)) {
+            console.log(`[${language.name}] Connection lost (code: ${event.code}) - initiating reconnection`);
+            this.scheduleReconnection(connection);
           }
         };
 
@@ -143,6 +150,13 @@ export class WebSocketService {
           connection.status = 'error';
           console.error(`STT WebSocket error for ${language.name}:`, error);
           this.updateConnectionStatus();
+          
+          // Schedule reconnection on error if not already reconnecting
+          if (!connection.isReconnecting && connection.reconnectAttempts < this.maxReconnectAttempts) {
+            console.log(`[${language.name}] Error occurred - scheduling reconnection`);
+            this.scheduleReconnection(connection);
+          }
+          
           reject(error);
         };
       });
@@ -152,17 +166,97 @@ export class WebSocketService {
     }
   }
 
-  private async reconnectLanguage(language: { code: string; name: string }, inputLanguage: string) {
-    console.log(`Attempting to reconnect ${language.name} after Deepgram timeout`);
+  private shouldReconnect(closeCode: number, connection: STTConnection): boolean {
+    // Don't reconnect if auto-reconnect is disabled
+    if (!this.isAutoReconnectEnabled) {
+      return false;
+    }
 
-    // Remove old connection
-    this.connections = this.connections.filter(conn => conn.language.code !== language.code);
+    // Don't reconnect if already reconnecting or max attempts reached
+    if (connection.isReconnecting || connection.reconnectAttempts >= this.maxReconnectAttempts) {
+      return false;
+    }
+
+    // Don't reconnect if user manually closed (code 1000)
+    if (closeCode === 1000) {
+      return false;
+    }
+
+    // Reconnect for these codes (expanded list for better coverage):
+    // 1011 - Internal server error (Deepgram timeout)
+    // 1006 - Abnormal closure (network issues)
+    // 1001 - Going away (server restart)
+    // 1005 - No status code (unexpected close)
+    // 1002 - Protocol error
+    // 1003 - Unsupported data
+    const reconnectCodes = [1011, 1006, 1001, 1005, 1002, 1003];
+    const shouldReconnect = reconnectCodes.includes(closeCode);
+    
+    console.log(`[${connection.language.name}] Should reconnect for close code ${closeCode}: ${shouldReconnect}`);
+    return shouldReconnect;
+  }
+
+  private scheduleReconnection(connection: STTConnection): void {
+    if (connection.isReconnecting || !this.isAutoReconnectEnabled) {
+      return;
+    }
+
+    connection.isReconnecting = true;
+    connection.reconnectAttempts++;
+
+    // Exponential backoff with jitter and max cap: 1s, 2s, 4s, 8s, 16s, 30s (max)
+    const baseDelay = this.baseReconnectDelay * Math.pow(2, connection.reconnectAttempts - 1);
+    const cappedDelay = Math.min(baseDelay, this.maxReconnectDelay);
+    // Add jitter (±25%) to avoid thundering herd
+    const jitter = cappedDelay * 0.25 * (Math.random() - 0.5);
+    const delay = Math.max(1000, cappedDelay + jitter);
+    
+    console.log(`[${connection.language.name}] Scheduling reconnection attempt ${connection.reconnectAttempts}/${this.maxReconnectAttempts} in ${Math.round(delay)}ms`);
+
+    setTimeout(async () => {
+      try {
+        await this.reconnectLanguage(connection);
+      } catch (error) {
+        console.error(`[${connection.language.name}] Reconnection attempt ${connection.reconnectAttempts} failed:`, error);
+        connection.isReconnecting = false;
+        
+        // Schedule next attempt if we haven't exceeded max attempts and auto-reconnect is still enabled
+        if (connection.reconnectAttempts < this.maxReconnectAttempts && this.isAutoReconnectEnabled) {
+          this.scheduleReconnection(connection);
+        } else {
+          console.error(`[${connection.language.name}] Max reconnection attempts reached or auto-reconnect disabled. Stopping.`);
+        }
+      }
+    }, delay);
+  }
+
+  private async reconnectLanguage(connection: STTConnection): Promise<void> {
+    console.log(`[${connection.language.name}] Attempting reconnection (attempt ${connection.reconnectAttempts}/${this.maxReconnectAttempts})`);
+
+    // Close old connection if still open
+    if (connection.ws.readyState === WebSocket.OPEN || connection.ws.readyState === WebSocket.CONNECTING) {
+      connection.ws.close();
+    }
+
+    // Remove old connection from array
+    const connectionIndex = this.connections.findIndex(conn => conn.language.code === connection.language.code);
+    if (connectionIndex !== -1) {
+      this.connections.splice(connectionIndex, 1);
+    }
 
     try {
-      await this.createConnection(language, inputLanguage);
-      console.log(`[${language.name}] Successfully reconnected after timeout`);
+      await this.createConnection(connection.language, this.currentInputLanguage);
+      console.log(`[${connection.language.name}] Successfully reconnected on attempt ${connection.reconnectAttempts}`);
+      
+      // Reset reconnect attempts on successful connection
+      const newConnection = this.connections.find(conn => conn.language.code === connection.language.code);
+      if (newConnection) {
+        newConnection.reconnectAttempts = 0;
+        newConnection.isReconnecting = false;
+      }
     } catch (error) {
-      console.error(`[${language.name}] Reconnection failed:`, error);
+      console.error(`[${connection.language.name}] Reconnection attempt failed:`, error);
+      throw error;
     }
   }
 
@@ -178,12 +272,32 @@ export class WebSocketService {
 
   getConnectionStatus(): { connected: number; total: number; isFullyConnected: boolean } {
     const connected = this.getConnectedCount();
-    const total = this.targetLanguages.length;
+    const total = this.allLanguages.length;
     return {
       connected,
       total,
       isFullyConnected: connected === total
     };
+  }
+
+  startStreaming(): void {
+    const connectedSockets = this.connections.filter(conn =>
+      conn.status === 'connected' && conn.ws.readyState === WebSocket.OPEN
+    );
+
+    connectedSockets.forEach(({ ws, language }) => {
+      try {
+        // Send language_settings to trigger streaming start (this is what backend expects)
+        ws.send(JSON.stringify({
+          type: 'language_settings',
+          input_language: 'hi', // Hindi input
+          output_language: language.code // Target language for this connection
+        }));
+        console.log(`Sent language_settings to start streaming for ${language.name}: hi → ${language.code}`);
+      } catch (error) {
+        console.error(`Failed to send language_settings to ${language.name}:`, error);
+      }
+    });
   }
 
   sendAudioData(audioData: ArrayBuffer): void {
@@ -202,9 +316,16 @@ export class WebSocketService {
 
   disconnectAll(): void {
     console.log('Disconnecting all STT WebSocket connections...');
+    
+    // Disable auto-reconnect during manual disconnect
+    this.isAutoReconnectEnabled = false;
+    
+    // Stop health check
+    this.stopConnectionHealthCheck();
+    
     this.connections.forEach(({ ws, language }) => {
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-        ws.close();
+        ws.close(1000, 'Manual disconnect'); // Use code 1000 for clean close
         console.log(`Disconnected STT WebSocket for ${language.name}`);
       }
     });
@@ -232,5 +353,57 @@ export class WebSocketService {
         document.body.removeAttribute('data-audio-processing');
       }
     }
+  }
+
+  // Force reconnect all connections (useful for translate button in audio mode)
+  async forceReconnectAll(): Promise<void> {
+    console.log('[FORCE RECONNECT] Restarting all WebSocket connections...');
+    
+    // Reset reconnect attempts for all connections
+    this.connections.forEach(conn => {
+      conn.reconnectAttempts = 0;
+      conn.isReconnecting = false;
+    });
+    
+    // Reconnect with current language
+    await this.connectAll(this.currentInputLanguage);
+  }
+
+  // Connection health check - periodically check and reconnect dead connections
+  private startConnectionHealthCheck(): void {
+    this.stopConnectionHealthCheck(); // Clear any existing interval
+    
+    this.connectionHealthCheckInterval = setInterval(() => {
+      if (!this.isAutoReconnectEnabled) return;
+      
+      const deadConnections = this.connections.filter(conn => 
+        conn.ws.readyState === WebSocket.CLOSED && 
+        !conn.isReconnecting && 
+        conn.reconnectAttempts < this.maxReconnectAttempts
+      );
+      
+      if (deadConnections.length > 0) {
+        console.log(`[HEALTH CHECK] Found ${deadConnections.length} dead connections, attempting to revive...`);
+        deadConnections.forEach(conn => {
+          this.scheduleReconnection(conn);
+        });
+      }
+    }, 15000); // Check every 15 seconds
+  }
+
+  private stopConnectionHealthCheck(): void {
+    if (this.connectionHealthCheckInterval) {
+      clearInterval(this.connectionHealthCheckInterval);
+      this.connectionHealthCheckInterval = null;
+    }
+  }
+
+  // Get connection health status
+  getConnectionHealth(): { healthy: number; dead: number; reconnecting: number } {
+    const healthy = this.connections.filter(conn => conn.status === 'connected').length;
+    const dead = this.connections.filter(conn => conn.status === 'disconnected' || conn.status === 'error').length;
+    const reconnecting = this.connections.filter(conn => conn.isReconnecting).length;
+    
+    return { healthy, dead, reconnecting };
   }
 }

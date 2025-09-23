@@ -988,19 +988,37 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
           }
         }
 
-        // Also add to session service for advanced mapping
-        sessionService.addTranscriptChunk(languageCode, {
-          original_text: data.original_text || '',
-          translated_text: data.translated_text || '',
-          latency: data.latency || 0,
-          is_final: data.is_final || false,
-          confidence: data.confidence
-        });
+        // Also add to session service for advanced mapping (only in Live Mode)
+        if (!isOneShotMode) {
+          // Ensure session exists before adding transcript
+          const activeSession = sessionService.getActiveSession(languageCode);
+          if (!activeSession) {
+            console.log(`[SESSION] Creating missing session for ${languageCode}`);
+            const lang = LANGUAGES.find((l: Language) => l.code === languageCode);
+            sessionService.createSession(languageCode, lang?.name || languageCode);
+          }
+          
+          sessionService.addTranscriptChunk(languageCode, {
+            original_text: data.original_text || '',
+            translated_text: data.translated_text || '',
+            latency: data.latency || 0,
+            is_final: data.is_final || false,
+            confidence: data.confidence
+          });
+        }
 
-        if (data.audio_data && data.audio_data.trim() !== '') {
+        if (!isOneShotMode && data.audio_data && data.audio_data.trim() !== '') {
+          // Ensure session exists before adding audio
+          const activeSession = sessionService.getActiveSession(languageCode);
+          if (!activeSession) {
+            console.log(`[SESSION] Creating missing session for audio in ${languageCode}`);
+            const lang = LANGUAGES.find((l: Language) => l.code === languageCode);
+            sessionService.createSession(languageCode, lang?.name || languageCode);
+          }
+          
           sessionService.addAudioChunk(languageCode, data.audio_data);
           console.log(`[${languageCode.toUpperCase()}] Added AUDIO + TRANSCRIPT to global ${languageCode.toUpperCase()}Queue`);
-        } else {
+        } else if (!isOneShotMode) {
           console.log(`[${languageCode.toUpperCase()}] Added TRANSCRIPT-ONLY to global ${languageCode.toUpperCase()}Queue (TTS failed)`);
         }
 

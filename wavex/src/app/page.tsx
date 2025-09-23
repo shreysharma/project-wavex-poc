@@ -41,7 +41,15 @@ export default function Home() {
     currentlyPlayingLanguage,
     setCurrentlyPlayingLanguage,
     sharedAudioPosition,
-    setSharedAudioPosition
+    setSharedAudioPosition,
+    clearAllQueues,
+    restartAudioSession,
+    isOneShotMode,
+    setIsTranslating,
+    setIsWaitingForAudioChunks,
+    setTranslationResults,
+    setOneShotResults,
+    setOneShotProgress
   } = useAppContext();
   const [popupPosition, setPopupPosition] = useState({ top: 0, left: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -81,6 +89,19 @@ export default function Home() {
     // Auto-resize logic
     target.style.height = 'auto';
     target.style.height = Math.min(target.scrollHeight, window.innerHeight * 0.3 - 8) + 'px';
+    
+    // Force scroll to top after a brief delay to ensure DOM updates
+    setTimeout(() => {
+      target.scrollTop = 0;
+    }, 0);
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const target = e.currentTarget;
+    // After paste completes, scroll to top
+    setTimeout(() => {
+      target.scrollTop = 0;
+    }, 10);
   };
 
   useEffect(() => {
@@ -123,7 +144,7 @@ export default function Home() {
         }}
       >
         <div className="space-y-2">
-          {['audio', 'video', 'text'].map((type, index) => (
+          {['audio', 'video'/*, 'text'*/].map((type, index) => (
             <button
               key={type}
               className="w-full text-left p-2 hover:bg-gray-100 rounded flex items-center gap-2 transition-all duration-200 ease-in-out hover:scale-105 hover:shadow-sm"
@@ -164,14 +185,16 @@ export default function Home() {
   };
 
   return (
-    <div className="w-full h-screen p-20 pb-0 flex items-end gap-3">
-      <div className="w-full h-[90%] flex flex-col">
-        <h1 className="text-[24px] font-switzer mb-2">
-          Input
-        </h1>
+    <div className="w-full h-screen pt-40 px-20 pb-4 flex flex-col">
+      <div className="w-full h-full flex flex-col">
+        {/* Sticky Input Section */}
+        <div className="sticky top-0 bg-white z-30 pb-4">
+          <h1 className="text-[24px] font-switzer mb-2">
+            Input
+          </h1>
 
-        {/* Input Area - Everything in one horizontal line */}
-        <div className="w-full min-h-[8vh] max-h-[30vh] bg-[#F4F4F4] rounded-[14px] flex items-center p-1 mb-4 gap-2">
+          {/* Input Area - Everything in one horizontal line */}
+          <div className={`w-full ${selectedVideoFile || selectedAudioFile ? 'min-h-[15vh]' : 'min-h-[8vh]'} max-h-[40vh] bg-[#F4F4F4] rounded-[14px] flex items-center p-1 gap-2`}>
           {/* Plus Icon */}
           <button
             ref={buttonRef}
@@ -188,7 +211,17 @@ export default function Home() {
           {selectedAudioFile && (
             <AudioPlayer
               file={selectedAudioFile}
-              onRemove={() => setSelectedAudioFile(null)}
+              onRemove={async () => {
+                setSelectedAudioFile(null);
+                // Stop all processing and clear results
+                setIsTranslating(false);
+                setIsWaitingForAudioChunks(false);
+                setTranslationResults([]);
+                setOneShotResults([]);
+                setOneShotProgress({ completed: 0, total: 0 });
+                // Restart audio session when removing audio file
+                await restartAudioSession();
+              }}
               className="flex-shrink-0 animate-in fade-in-0 slide-in-from-left-4 duration-300"
             />
           )}
@@ -197,22 +230,41 @@ export default function Home() {
           {selectedVideoFile && (
             <VideoPlayer
               file={selectedVideoFile}
-              onRemove={() => setSelectedVideoFile(null)}
+              onRemove={async () => {
+                setSelectedVideoFile(null);
+                // Stop all processing and clear results
+                setIsTranslating(false);
+                setIsWaitingForAudioChunks(false);
+                setTranslationResults([]);
+                setOneShotResults([]);
+                setOneShotProgress({ completed: 0, total: 0 });
+                // Restart audio session when removing video file
+                await restartAudioSession();
+              }}
               className="flex-shrink-0 animate-in fade-in-0 slide-in-from-left-4 duration-300"
             />
           )}
 
-          {/* Textarea - Always visible, takes remaining space */}
+          {/* Textarea - Disabled when audio/video files are selected */}
           <textarea
             ref={textareaRef}
             name=""
             id=""
-            placeholder="Type here"
+            placeholder={selectedVideoFile || selectedAudioFile ? "" : "Type here"}
             value={inputText}
             onChange={handleInputChange}
-            className="bg-transparent rounded-lg resize-none flex-1 min-h-[calc(8vh-8px)] py-2 px-2 focus:outline-none overflow-y-auto"
-            style={{ lineHeight: '1.5' }}
+            onPaste={handlePaste}
+            disabled={!!(selectedVideoFile || selectedAudioFile)}
+            className={`bg-transparent rounded-lg resize-none flex-1 ${selectedVideoFile || selectedAudioFile ? 'min-h-[calc(15vh-8px)] opacity-50 cursor-not-allowed' : 'min-h-[calc(8vh-8px)]'} focus:outline-none overflow-y-auto`}
+            style={{ 
+              lineHeight: '1.5',
+              paddingTop: '24px',
+              paddingLeft: '8px',
+              paddingRight: '8px',
+              paddingBottom: '8px'
+            }}
           />
+
 
           <button
             id="translateBtn"
@@ -234,11 +286,21 @@ export default function Home() {
              Translate
             </div>
           </button>
+          </div>
         </div>
 
-        {/* Translation Results Area */}
-        <div className='w-full flex-1 overflow-y-auto min-h-0 pb-4'>
-          {translationResults.length > 0 && (
+        {/* Scrollable Content Area */}
+        <div className="flex-1 overflow-y-auto">
+          {/* Output Section */}
+        {(translationResults.length > 0 || selectedVideoFile || selectedAudioFile) && (
+          <div className="w-full mt-6">
+            <h2 className="text-[24px] font-switzer mb-4">Output</h2>
+          </div>
+        )}
+
+        {/* Translation Results Area - Show for text translations OR One Shot Mode */}
+        <div className='w-full pb-4'>
+          {translationResults.length > 0 && (!selectedVideoFile && !selectedAudioFile || isOneShotMode) && (
             <div className={`
               transition-all duration-500 ease-in-out
               ${translationResults.length > 0
@@ -259,7 +321,7 @@ export default function Home() {
                 }}
                 isLoading={false}
               />
-              <p className='h-[16]'></p>
+              <div className='h-4'></div>
               {translationResults.map((result, index) => (
                 <div
                   key={result.language.code}
@@ -275,6 +337,8 @@ export default function Home() {
                   <LanguageTranscript
                     data={result}
                     isLoading={isTranslating && index === 0}
+                    videoFile={selectedVideoFile || undefined}
+                    audioFile={selectedAudioFile || undefined}
                   />
                 </div>
               ))}
@@ -285,14 +349,13 @@ export default function Home() {
         {/* Real-time Language Transcripts - Only show for audio/video processing */}
         {(selectedAudioFile || selectedVideoFile) && (
           <div className="mt-4">
-            <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center gap-3">
-              Real-time STT Transcripts
-              {currentlyPlayingLanguage && (
+            {currentlyPlayingLanguage && (
+              <div className="mb-4 flex items-center gap-3">
                 <span className="text-sm text-green-600 font-medium bg-green-50 px-3 py-1 rounded-full">
                   🔊 Playing: {currentlyPlayingLanguage.toUpperCase()}
                 </span>
-              )}
-            </h2>
+              </div>
+            )}
 
           <div className="flex flex-col gap-4">
             {/* Hindi Queue */}
@@ -300,6 +363,8 @@ export default function Home() {
               queue={hindiQueue}
               isGloballyPlaying={currentlyPlayingLanguage === 'hi'}
               sharedAudioPosition={sharedAudioPosition}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
               onTogglePlay={(currentPosition?: number) => {
                 if (currentlyPlayingLanguage === 'hi') {
                   // Save current position before stopping
@@ -318,6 +383,8 @@ export default function Home() {
             <LanguageTranscript
               queue={englishQueue}
               isGloballyPlaying={currentlyPlayingLanguage === 'en'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
               onTogglePlay={() =>
                 currentlyPlayingLanguage === 'en'
                   ? setCurrentlyPlayingLanguage(null)
@@ -329,6 +396,8 @@ export default function Home() {
             <LanguageTranscript
               queue={tamilQueue}
               isGloballyPlaying={currentlyPlayingLanguage === 'ta'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
               onTogglePlay={() =>
                 currentlyPlayingLanguage === 'ta'
                   ? setCurrentlyPlayingLanguage(null)
@@ -340,6 +409,8 @@ export default function Home() {
             <LanguageTranscript
               queue={teluguQueue}
               isGloballyPlaying={currentlyPlayingLanguage === 'te'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
               onTogglePlay={() =>
                 currentlyPlayingLanguage === 'te'
                   ? setCurrentlyPlayingLanguage(null)
@@ -351,6 +422,8 @@ export default function Home() {
             <LanguageTranscript
               queue={bengaliQueue}
               isGloballyPlaying={currentlyPlayingLanguage === 'bn'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
               onTogglePlay={() =>
                 currentlyPlayingLanguage === 'bn'
                   ? setCurrentlyPlayingLanguage(null)
@@ -362,6 +435,8 @@ export default function Home() {
             <LanguageTranscript
               queue={marathiQueue}
               isGloballyPlaying={currentlyPlayingLanguage === 'mr'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
               onTogglePlay={() =>
                 currentlyPlayingLanguage === 'mr'
                   ? setCurrentlyPlayingLanguage(null)
@@ -373,6 +448,8 @@ export default function Home() {
             <LanguageTranscript
               queue={gujaratiQueue}
               isGloballyPlaying={currentlyPlayingLanguage === 'gu'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
               onTogglePlay={() =>
                 currentlyPlayingLanguage === 'gu'
                   ? setCurrentlyPlayingLanguage(null)
@@ -384,6 +461,8 @@ export default function Home() {
             <LanguageTranscript
               queue={kannadaQueue}
               isGloballyPlaying={currentlyPlayingLanguage === 'kn'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
               onTogglePlay={() =>
                 currentlyPlayingLanguage === 'kn'
                   ? setCurrentlyPlayingLanguage(null)
@@ -395,6 +474,8 @@ export default function Home() {
             <LanguageTranscript
               queue={malayalamQueue}
               isGloballyPlaying={currentlyPlayingLanguage === 'ml'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
               onTogglePlay={() =>
                 currentlyPlayingLanguage === 'ml'
                   ? setCurrentlyPlayingLanguage(null)
@@ -406,6 +487,8 @@ export default function Home() {
             <LanguageTranscript
               queue={punjabiQueue}
               isGloballyPlaying={currentlyPlayingLanguage === 'pa'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
               onTogglePlay={() =>
                 currentlyPlayingLanguage === 'pa'
                   ? setCurrentlyPlayingLanguage(null)
@@ -417,6 +500,8 @@ export default function Home() {
             <LanguageTranscript
               queue={urduQueue}
               isGloballyPlaying={currentlyPlayingLanguage === 'ur'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
               onTogglePlay={() =>
                 currentlyPlayingLanguage === 'ur'
                   ? setCurrentlyPlayingLanguage(null)
@@ -428,6 +513,8 @@ export default function Home() {
             <LanguageTranscript
               queue={odiaQueue}
               isGloballyPlaying={currentlyPlayingLanguage === 'or'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
               onTogglePlay={() =>
                 currentlyPlayingLanguage === 'or'
                   ? setCurrentlyPlayingLanguage(null)
@@ -439,6 +526,8 @@ export default function Home() {
             <LanguageTranscript
               queue={assameseQueue}
               isGloballyPlaying={currentlyPlayingLanguage === 'as'}
+              videoFile={selectedVideoFile || undefined}
+              audioFile={selectedAudioFile || undefined}
               onTogglePlay={() =>
                 currentlyPlayingLanguage === 'as'
                   ? setCurrentlyPlayingLanguage(null)
@@ -448,39 +537,8 @@ export default function Home() {
           </div>
         </div>
         )}
-      </div>
-
-      {/* Latency Box - Only show when there are translation results */}
-      {translationResults.length > 0 && (
-        <div className="min-w-[350px] h-[90%] py-5 transition-all duration-500 ease-in-out opacity-100 transform translate-x-0 animate-in slide-in-from-right-4">
-          <div className='bg-[#F7F7F7] h-full rounded-[14px] w-full p-6'>
-            <div className="flex justify-between items-center mb-3">
-              <h4 className="text-black text-[24px]">Latency</h4>
-            </div>
-
-            <div className='w-full flex flex-col gap-2 h-full overflow-y-auto'>
-              {translationResults.map((result, index) => (
-                <div
-                  key={result.language.code}
-                  className="w-full text-[16px] flex gap-1 transition-all duration-200 ease-in-out"
-                  style={{
-                    animationDelay: `${index * 30}ms`,
-                    animation: 'fadeInUp 0.3s ease-out forwards'
-                  }}
-                >
-                  <p className='text-[#3840EB] flex-shrink-0'>{result.language.name} - </p>
-                  <p className='text-wrap flex-1'>
-                    {result.latency > 0
-                      ? `[Trans: ${result.latency.toFixed(2)}ms]`
-                      : '[Waiting for translation...]'
-                    }
-                  </p>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
-      )}
+      </div>
 
       {/* Connection Overlay - Blocks app until STT connections are ready */}
       <ConnectionOverlay />

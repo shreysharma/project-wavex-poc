@@ -14,10 +14,17 @@ const Navbar = () => {
     isOneShotMode,
     setIsOneShotMode,
     handleLanguageSelect,
+    clearAllQueues,
+    setTranslationResults,
+    setInputText,
+    setSelectedAudioFile,
+    setSelectedVideoFile,
+    setIsTranslating,
+    setIsWaitingForAudioChunks,
   } = useAppContext();
 
   return (
-    <nav className="fixed top-16 w-full px-6 py-4 my-4 flex justify-between items-center bg-white shadow-sm rounded-lg">
+    <nav className="fixed top-14 w-full px-6 py-4 my-4 flex justify-between items-center bg-white shadow-sm rounded-lg z-40">
       <div className="flex gap-4 items-center">
         <h1 className="text-2xl text-gray-800">Continuous STT Test</h1>
 
@@ -85,13 +92,26 @@ const Navbar = () => {
         {/* One Shot Toggle */}
         <div className="flex items-center gap-3">
           <span className={`text-sm font-medium transition-colors ${isOneShotMode ? 'text-blue-600' : 'text-gray-700'}`}>
-            {isOneShotMode ? 'Batch Mode' : 'Live Mode'}
+            One Shot
           </span>
           <button
             onClick={() => {
               const newMode = !isOneShotMode;
               setIsOneShotMode(newMode);
               console.log(newMode ? 'One Shot mode enabled' : 'One Shot mode disabled');
+              
+              // Clear everything when switching to one shot mode
+              if (newMode) {
+                console.log('Clearing all data for One Shot mode...');
+                clearAllQueues();
+                setTranslationResults([]);
+                setInputText('');
+                setSelectedAudioFile(null);
+                setSelectedVideoFile(null);
+                setIsTranslating(false);
+                setIsWaitingForAudioChunks(false);
+                console.log('✅ Cleared all data and processing states for One Shot mode');
+              }
             }}
             className={`
               relative inline-flex h-6 w-11 items-center rounded-full transition-colors

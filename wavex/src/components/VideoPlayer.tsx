@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
+import { useAppContext } from '@/contexts/AppContext';
 
 interface VideoPlayerProps {
   file: File;
@@ -10,96 +11,128 @@ interface VideoPlayerProps {
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ file, onRemove, className = '' }) => {
   const [isPlaying, setIsPlaying] = useState(false);
-  const [showControls, setShowControls] = useState(true);
+  const { currentlyPlayingVideo, setCurrentlyPlayingVideo } = useAppContext();
+  
+  // Memoize URL to prevent recreation on re-renders
+  const videoUrl = useMemo(() => URL.createObjectURL(file), [file]);
+  const videoId = `input-video-${file.name}-${file.lastModified}`;
+  
+  console.log('VideoPlayer render: isPlaying =', isPlaying, 'videoUrl =', videoUrl.substring(0, 30));
 
-  const handlePlayPause = (e: React.MouseEvent) => {
+  const handlePlayPause = async (e: React.MouseEvent) => {
+    console.log('VideoPlayer: Button clicked');
     e.preventDefault();
+    e.stopPropagation();
+    
     const video = e.currentTarget.parentElement?.querySelector('video') as HTMLVideoElement;
-    const playIcon = e.currentTarget.querySelector('.video-play-icon');
-    const pauseIcon = e.currentTarget.querySelector('.video-pause-icon');
-
-    if (video.paused) {
-      video.play();
-      setIsPlaying(true);
-      setShowControls(false);
-      playIcon?.classList.add('hidden');
-      pauseIcon?.classList.remove('hidden');
-    } else {
-      video.pause();
-      setIsPlaying(false);
-      setShowControls(true);
-      playIcon?.classList.remove('hidden');
-      pauseIcon?.classList.add('hidden');
+    if (!video) {
+      console.log('VideoPlayer: No video found');
+      return;
     }
-  };
 
-  const drawVideoWaveform = (canvas: HTMLCanvasElement) => {
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    console.log('VideoPlayer: Video found, paused:', video.paused);
 
-    canvas.width = canvas.offsetWidth;
-    canvas.height = 24;
-
-    // White background (like index.html)
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Black waveform bars (like index.html)
-    ctx.fillStyle = '#000000';
-    const barWidth = 3;
-    const barSpacing = 2;
-    const barCount = Math.floor(canvas.width / (barWidth + barSpacing));
-    const heights = [6, 9, 4, 12, 7, 10, 5, 14, 8, 4, 12, 7, 5, 10, 9, 4, 12, 6, 9, 7];
-
-    for (let i = 0; i < barCount; i++) {
-      const x = i * (barWidth + barSpacing);
-      const height = heights[i % heights.length];
-      const y = (canvas.height - height) / 2;
-
-      // Draw rounded rectangle for waveform bars
-      ctx.beginPath();
-      ctx.roundRect(x, y, barWidth, height, 1);
-      ctx.fill();
+    try {
+      if (video.paused) {
+        console.log('VideoPlayer: Attempting play...');
+        
+        // Pause any currently playing video and their audio
+        if (currentlyPlayingVideo && currentlyPlayingVideo !== videoId) {
+          // Find and pause other videos and their translated audio
+          const allVideos = document.querySelectorAll('video');
+          allVideos.forEach(v => {
+            if (v !== video && !v.paused) {
+              v.pause();
+              // Also pause any translated audio in the same container
+              const container = v.closest('.relative');
+              const audioElement = container?.querySelector('audio');
+              if (audioElement && !audioElement.paused) {
+                audioElement.pause();
+              }
+            }
+          });
+        }
+        
+        await video.play();
+        console.log('VideoPlayer: Play successful');
+        
+        // Update global and local state
+        setCurrentlyPlayingVideo(videoId);
+        setIsPlaying(true);
+      } else {
+        console.log('VideoPlayer: Pausing...');
+        video.pause();
+        
+        // Clear global state if this was the playing video
+        if (currentlyPlayingVideo === videoId) {
+          setCurrentlyPlayingVideo(null);
+        }
+        setIsPlaying(false);
+      }
+    } catch (error) {
+      console.warn('VideoPlayer: Play/pause failed:', error);
+      setIsPlaying(false);
     }
   };
 
   return (
     <div className={`p-3 ${className}`}>
       <div className="flex flex-col gap-3">
-        {/* Video Element with Overlay (like index.html) */}
-        <div className="relative w-full">
+        {/* Video Element */}
+        <div className="relative w-64 h-36">
           <video
-            className="w-[400px] h-48 rounded object-cover"
-            src={URL.createObjectURL(file)}
-            muted
+            className="w-64 h-36 rounded object-cover"
+            src={videoUrl}
             preload="metadata"
-            onPlay={() => setShowControls(false)}
-            onPause={() => setShowControls(true)}
+            playsInline
+            onPlay={() => {
+              console.log('VideoPlayer: onPlay event fired');
+            }}
+            onPause={() => {
+              console.log('VideoPlayer: onPause event fired - something paused the video!');
+              console.trace('VideoPlayer: Stack trace for pause event');
+              setIsPlaying(false);
+            }}
             onEnded={() => {
               setIsPlaying(false);
-              setShowControls(true);
             }}
           />
 
-          {/* Overlay Play Button (matches index.html design) */}
+          {/* Remove Button */}
           <button
-            className={`
-              absolute inset-0 flex items-center justify-center transition-all duration-200 rounded
-              ${showControls ? 'bg-black bg-opacity-30 hover:bg-opacity-40' : 'bg-transparent pointer-events-none opacity-0'}
-            `}
-            onClick={handlePlayPause}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemove();
+            }}
+            className="absolute top-2 right-2 w-6 h-6 bg-red-500 hover:bg-red-600 text-white rounded-full flex items-center justify-center transition-colors duration-200 z-10"
+            title="Remove video"
           >
-            <div className="w-16 h-16 bg-[#3840EB] rounded-[24px] flex items-center justify-center">
-              <svg className="video-play-icon" width="25" height="25" viewBox="0 0 14 15" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M2.91602 3.3277C2.91602 2.76119 2.91602 2.47794 3.03413 2.32179C3.13704 2.18577 3.29432 2.10159 3.46458 2.09143C3.66002 2.07976 3.8957 2.23688 4.36707 2.55112L10.5011 6.64051C10.8906 6.90016 11.0854 7.02999 11.1532 7.19363C11.2126 7.33669 11.2126 7.49748 11.1532 7.64054C11.0854 7.80418 10.8906 7.93401 10.5011 8.19367L4.36707 12.2831C3.8957 12.5973 3.66002 12.7544 3.46458 12.7427C3.29432 12.7326 3.13704 12.6484 3.03413 12.5124C2.91602 12.3562 2.91602 12.073 2.91602 11.5065V3.3277Z" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-              <svg className="video-pause-icon hidden" width="25" height="25" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M8 5V15M12 5V15" stroke="white" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </div>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
           </button>
-        </div>
 
+          {/* Play Button - Only show when paused */}
+          {!isPlaying && (
+            <button
+              className="absolute inset-0 flex items-center justify-center transition-all duration-200 rounded bg-transparent"
+              onClick={handlePlayPause}
+            >
+              <svg width="30" height="29" viewBox="0 0 30 29" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M0 8.41699C0 3.99871 3.58172 0.416992 8 0.416992H22C26.4183 0.416992 30 3.99871 30 8.41699V20.417C30 24.8353 26.4183 28.417 22 28.417H8C3.58172 28.417 0 24.8353 0 20.417V8.41699Z" fill="#3840EB"/>
+                <path d="M10.916 10.3277C10.916 9.76119 10.916 9.47794 11.0341 9.32179C11.137 9.18577 11.2943 9.10159 11.4646 9.09143C11.66 9.07976 11.8957 9.23688 12.3671 9.55112L18.5011 13.6405C18.8906 13.9002 19.0854 14.03 19.1532 14.1936C19.2126 14.3367 19.2126 14.4975 19.1532 14.6405C19.0854 14.8042 18.8906 14.934 18.5011 15.1937L12.3671 19.2831C11.8957 19.5973 11.66 19.7544 11.4646 19.7427C11.2943 19.7326 11.137 19.6484 11.0341 19.5124C10.916 19.3562 10.916 19.073 10.916 18.5065V10.3277Z" stroke="white" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            </button>
+          )}
+          
+          {/* Clickable video area for pause when playing */}
+          {isPlaying && (
+            <button 
+              className="absolute inset-0 bg-transparent"
+              onClick={handlePlayPause}
+            />
+          )}
+        </div>
       </div>
     </div>
   );
