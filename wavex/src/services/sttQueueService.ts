@@ -28,6 +28,7 @@ export class STTQueueService {
   private queues: Map<string, LanguageQueue> = new Map();
   private events: QueueServiceEvents | null = null;
   private maxQueueSize = 100; // Prevent memory overflow
+  private currentSessionId: string | null = null;
 
   private readonly targetLanguages = [
     { code: 'hi', name: 'Hindi' },
@@ -83,6 +84,13 @@ export class STTQueueService {
     const queue = this.queues.get(languageCode);
     if (!queue) {
       console.error(`Queue not found for language: ${languageCode}`);
+      return;
+    }
+
+    // Session-based filtering: Only allow chunks from current session
+    const currentSessionId = this.getCurrentSessionId();
+    if (currentSessionId && !data.id.startsWith(currentSessionId)) {
+      console.log(`[STT SESSION FILTER] Rejected chunk from different session: ${data.id.substring(0, 50)}...`);
       return;
     }
 
@@ -181,6 +189,16 @@ export class STTQueueService {
       }
     });
     return processing;
+  }
+
+  // Session management methods
+  setCurrentSessionId(sessionId: string): void {
+    this.currentSessionId = sessionId;
+    console.log(`[STT QUEUE] Session ID updated: ${sessionId}`);
+  }
+
+  getCurrentSessionId(): string | null {
+    return this.currentSessionId;
   }
 
   // Process queue for specific language (batch processing)

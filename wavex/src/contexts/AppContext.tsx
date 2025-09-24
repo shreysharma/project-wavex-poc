@@ -357,6 +357,12 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       return;
     }
 
+    // Session-based filtering: Only add chunks from current session
+    if (!chunk.id.startsWith(currentSessionId)) {
+      console.log(`[SESSION FILTER] Rejected chunk from different session: ${chunk.id.substring(0, 50)}...`);
+      return;
+    }
+
     setter(prev => ({
       ...prev,
       chunks: [...prev.chunks, chunk],
@@ -961,8 +967,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
       setConnectedSTTCount(0);
       setIsInitialConnection(true);
       
-      // Generate new session ID to prevent any cross-contamination
-      setCurrentSessionId(Date.now().toString());
+      // Session ID already updated in mode switch effect to prevent cross-contamination
       
       console.log('[CLEAR ALL] Comprehensive cleanup completed - all history and processes stopped');
       
@@ -974,6 +979,15 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
   // Clear activity when switching between One Shot and Live Mode
   useEffect(() => {
     console.log(`[MODE SWITCH] Switching to ${isOneShotMode ? 'ONE SHOT' : 'LIVE'} mode - triggering comprehensive cleanup`);
+    
+    // Generate new session ID BEFORE cleanup to ensure session isolation
+    const newSessionId = Date.now().toString();
+    setCurrentSessionId(newSessionId);
+    console.log(`[SESSION] Generated new session ID: ${newSessionId}`);
+    
+    // Sync session ID with STTQueueService
+    const queueService = STTQueueService.getInstance();
+    queueService.setCurrentSessionId(newSessionId);
     
     // Use the comprehensive cleanup function for mode switching
     clearAllHistoryAndStopProcesses().then(() => {
@@ -1042,10 +1056,10 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
           return;
         }
 
-        // Only add to queue if chunk has audio_data
+        // Only add to queue if chunk has audio_data AND is from current session
         if (data.audio_data && data.audio_data.trim() !== '') {
           const audioChunk: AudioChunk = {
-            id: `${currentSessionId}-${languageCode}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+            id: `${currentSessionId}-live-${languageCode}-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
             audio_data: data.audio_data,
             translated_text: data.translated_text || '',
             original_text: data.original_text || '',
