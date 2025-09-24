@@ -73,6 +73,23 @@ export class TranslationService {
         };
       });
 
+      // Sort translations according to preferred order: Hindi, English, Punjabi, Urdu, Marathi first
+      const preferredOrder = ['hi', 'en', 'pa', 'ur', 'mr', 'gu', 'ta', 'te', 'bn', 'kn', 'ml', 'or', 'as'];
+      translations.sort((a, b) => {
+        const indexA = preferredOrder.indexOf(a.language.code);
+        const indexB = preferredOrder.indexOf(b.language.code);
+        
+        // If both languages are in preferred order, sort by their index
+        if (indexA !== -1 && indexB !== -1) {
+          return indexA - indexB;
+        }
+        // If only one is in preferred order, it comes first
+        if (indexA !== -1) return -1;
+        if (indexB !== -1) return 1;
+        // If neither is in preferred order, sort alphabetically
+        return a.language.name.localeCompare(b.language.name);
+      });
+
       return translations;
     } catch (error) {
       console.error('Translation error:', error);
