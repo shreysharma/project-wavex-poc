@@ -53,7 +53,7 @@ interface OneShotProgress {
 }
 
 export class OneShotService {
-  private static readonly API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+  private static readonly API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://wavex-poc-infra-dev-l2clzohaha-uc.a.run.app';
 
   // Language mapping for display
   private static readonly LANGUAGE_MAP: { [key: string]: { name: string; nativeName: string } } = {

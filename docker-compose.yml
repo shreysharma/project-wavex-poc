@@ -28,11 +28,12 @@ services:
     build: ./wavex
     ports:
       - "3000:3000"
+    environment:
+      # Add your API keys here or use .env file
+      - NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
     networks:
       - voice-translation-network
     restart: unless-stopped
-    depends_on:
-      - voice-translation
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/"]
       interval: 30s

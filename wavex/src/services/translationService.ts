@@ -16,7 +16,7 @@ interface TranslationResult {
 }
 
 export class TranslationService {
-  private static readonly API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+  private static readonly API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'https://wavex-poc-infra-dev-l2clzohaha-uc.a.run.app';
 
   static async translateText(text: string, sourceLanguage: string): Promise<TranslationResult[]> {
     try {
