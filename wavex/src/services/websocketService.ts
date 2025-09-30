@@ -84,7 +84,7 @@ export class WebSocketService {
     try {
       // Use the same WebSocket URL pattern as index.html
       const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//localhost:8000/stt-test`;
+      const wsUrl = `${protocol}//wavex-poc-infra-dev-l2clzohaha-uc.a.run.app/stt-test`;
       console.log(`Connecting to STT WebSocket for ${language.name}: ${wsUrl}`);
 
       const ws = new WebSocket(wsUrl);
