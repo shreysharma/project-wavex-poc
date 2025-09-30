@@ -278,7 +278,7 @@ export default function Home() {
             onPaste={handlePaste}
             onKeyDown={handleKeyDown}
             disabled={!!(selectedVideoFile || selectedAudioFile)}
-            className={`bg-transparent rounded-lg resize-none flex-1 ${selectedVideoFile || selectedAudioFile ? 'min-h-[calc(15vh-8px)] opacity-50 cursor-not-allowed' : 'min-h-[calc(8vh-8px)]'} focus:outline-none overflow-y-auto`}
+            className={`bg-transparent rounded-lg  resize-none flex-1 ${selectedVideoFile || selectedAudioFile ? 'min-h-[calc(15vh-8px)] opacity-50 cursor-not-allowed' : 'min-h-[calc(8vh-8px)]'} focus:outline-none overflow-y-auto`}
             style={{ 
               lineHeight: '1.5',
               paddingTop: '24px',
