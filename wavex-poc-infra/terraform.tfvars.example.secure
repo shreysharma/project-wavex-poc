@@ -1,0 +1,45 @@
+# GCP Configuration
+project_id = "your-gcp-project-id"
+region     = "us-central1"
+environment = "dev"
+
+# Service Configuration
+service_name  = "wavex"
+service_image = "gcr.io/cloudrun/hello"
+port          = 8000
+cpu           = "1"
+memory        = "512Mi"
+timeout       = 300
+min_instances = 1
+max_instances = 2
+
+# GitHub Configuration
+github_owner  = "your-github-username"
+github_repo   = "your-repo-name"
+github_branch = "main"
+
+enable_budget_alerts = false
+budget_amount       = 100
+budget_alert_emails = ["your-email@example.com"]
+# billing_account_id = "XXXXXX-XXXXXX-XXXXXX"  # Uncomment and set if using budget alerts
+
+# Environment Variables for the service
+# IMPORTANT: Use environment variables or Google Secret Manager for sensitive data
+env_vars = {
+  DEEPGRAM_API_KEY = "USE_ENV_VAR_OR_SECRET_MANAGER"  # Set via environment variable
+  ENVIRONMENT = "development"
+  LOG_LEVEL = "DEBUG"
+  
+  # Azure Speech Service Configuration
+  AZURE_SPEECH_KEY = "USE_ENV_VAR_OR_SECRET_MANAGER"  # Set via environment variable
+  AZURE_SPEECH_REGION = "eastus"
+  AZURE_SPEECH_ENDPOINT = "https://eastus.api.cognitive.microsoft.com/"
+  AZURE_TTS_VOICE_NAME = "en-US-AvaMultilingualNeural"
+  AZURE_TTS_SPEAKING_RATE = "1.0"
+}
+
+# Feature Flags
+enable_cloud_build = true
+
+# GitHub Connection Name (2nd gen)
+github_connection_name = "github"  # Update based on your connection name

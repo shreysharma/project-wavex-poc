@@ -1,0 +1,34 @@
+# GCP Configuration
+project_id = "your-gcp-project-id"
+region     = "us-central1"
+environment = "dev"
+
+# Service Configuration
+service_name  = "wavex"
+service_image = "gcr.io/your-project/your-image:latest"
+port          = 8080
+cpu           = "1"
+memory        = "512Mi"
+timeout       = 300
+min_instances = 0
+max_instances = 10
+
+# GitHub Configuration
+github_owner  = "your-github-username"
+github_repo   = "your-repo-name"
+github_branch = "main"
+
+# Budget Alert Configuration (optional - requires billing account ID)
+enable_budget_alerts = true
+budget_amount       = 100
+budget_alert_emails = ["your-email@example.com"]
+# billing_account_id = "XXXXXX-XXXXXX-XXXXXX"  # Uncomment and set if using budget alerts
+
+# Environment Variables for the service
+env_vars = {
+  LOG_LEVEL = "info"
+  # Add more environment variables as needed
+}
+
+# Feature Flags
+enable_cloud_build = true
