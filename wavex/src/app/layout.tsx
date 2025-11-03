@@ -4,6 +4,8 @@ import "./globals.css";
 import Header from "@/components/Header";
 import Navbar from "@/components/Navbar";
 import { AppProvider } from "@/contexts/AppContext";
+import { ConversationProvider } from "@/providers/ConversationProvider";
+import FloatingWidget from "@/components/FloatingWidget";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,11 +32,14 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <AppProvider>
-          <Header/>
-          <Navbar/>
-          {children}
-        </AppProvider>
+        <ConversationProvider>
+          <AppProvider>
+            <Header/>
+            <Navbar/>
+            {children}
+            <FloatingWidget />
+          </AppProvider>
+        </ConversationProvider>
       </body>
     </html>
   );
